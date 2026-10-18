@@ -249,3 +249,4 @@ export function logoutUser() {
     supabase.auth.signOut().catch(() => {});
   }
 }
+

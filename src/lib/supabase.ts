@@ -8,12 +8,19 @@ export interface SavedSupabaseConfig {
   anonKey: string;
 }
 
+export function cleanSupabaseUrl(url: string): string {
+  let clean = url.trim();
+  clean = clean.replace(/\/rest\/v1\/?$/i, '');
+  clean = clean.replace(/\/+$/, '');
+  return clean;
+}
+
 export function getStoredSupabaseConfig(): SavedSupabaseConfig | null {
   // 1. Variáveis de ambiente configuradas no .env (ou no painel da Vercel)
   const envUrl = import.meta.env.VITE_SUPABASE_URL;
   const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
   if (envUrl && envKey && !envUrl.includes('sua-url-aqui')) {
-    return { url: envUrl, anonKey: envKey };
+    return { url: cleanSupabaseUrl(envUrl), anonKey: envKey.trim() };
   }
 
   // 2. Fallback de localStorage (caso o professor configure via UI do app)
@@ -21,7 +28,9 @@ export function getStoredSupabaseConfig(): SavedSupabaseConfig | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.url && parsed.anonKey) return parsed;
+      if (parsed.url && parsed.anonKey) {
+        return { url: cleanSupabaseUrl(parsed.url), anonKey: parsed.anonKey.trim() };
+      }
     }
   } catch (e) {
     console.warn('Erro ao ler config do Supabase do localStorage', e);
