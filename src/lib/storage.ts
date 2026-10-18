@@ -7,10 +7,12 @@ const KEYS = {
   WEIGHTS: 'fittrack_weight_entries',
 };
 
-// Dados padrão iniciais ricos e realistas para primeira experiência
+// Planos Iniciais Mock vinculados ao aluno-lucas
 export const DEFAULT_PLANS: WorkoutPlan[] = [
   {
-    id: 'plan-a',
+    id: 'plan-a-lucas',
+    studentId: 'aluno-lucas',
+    createdBy: 'prof-igor',
     category: 'Treino A',
     name: 'Peito, Ombros & Tríceps',
     description: 'Foco em força empurrando e hipertrofia',
@@ -24,7 +26,9 @@ export const DEFAULT_PLANS: WorkoutPlan[] = [
     ],
   },
   {
-    id: 'plan-b',
+    id: 'plan-b-lucas',
+    studentId: 'aluno-lucas',
+    createdBy: 'prof-igor',
     category: 'Treino B',
     name: 'Costas & Bíceps',
     description: 'Puxadas, densidade dorsal e braços',
@@ -38,7 +42,9 @@ export const DEFAULT_PLANS: WorkoutPlan[] = [
     ],
   },
   {
-    id: 'plan-c',
+    id: 'plan-c-lucas',
+    studentId: 'aluno-lucas',
+    createdBy: 'prof-igor',
     category: 'Treino C',
     name: 'Pernas & Abdômen',
     description: 'Quadríceps, posteriores, panturrilha e core',
@@ -51,24 +57,43 @@ export const DEFAULT_PLANS: WorkoutPlan[] = [
       { id: 'ex-18', name: 'Prancha Abdominal', muscleGroup: 'Abdômen', targetSets: 3, targetReps: '45s', restSeconds: 60, lastWeightKg: 0 },
     ],
   },
+  // Treino para Mariana
+  {
+    id: 'plan-a-mariana',
+    studentId: 'aluna-mariana',
+    createdBy: 'prof-igor',
+    category: 'Treino A',
+    name: 'Inferiores - Glúteos & Posterior',
+    description: 'Ênfase em cadeia posterior e glúteos',
+    exercises: [
+      { id: 'ex-m1', name: 'Elevação Pélvica com Barra', muscleGroup: 'Pernas', targetSets: 4, targetReps: '10-12', restSeconds: 90, lastWeightKg: 60 },
+      { id: 'ex-m2', name: 'Agachamento Búlgaro', muscleGroup: 'Pernas', targetSets: 3, targetReps: '10 cada', restSeconds: 75, lastWeightKg: 12 },
+      { id: 'ex-m3', name: 'Stiff com Halteres', muscleGroup: 'Pernas', targetSets: 4, targetReps: '12', restSeconds: 75, lastWeightKg: 20 },
+      { id: 'ex-m4', name: 'Cadeira Abdutora', muscleGroup: 'Pernas', targetSets: 4, targetReps: '15', restSeconds: 60, lastWeightKg: 50 },
+    ],
+  },
 ];
 
 // Dados iniciais de peso corporal
 export const DEFAULT_WEIGHTS: WeightEntry[] = [
-  { id: 'w-1', date: '2026-09-15', weightKg: 82.5, note: 'Início da rotina' },
-  { id: 'w-2', date: '2026-09-22', weightKg: 81.8, note: 'Fim da semana 1' },
-  { id: 'w-3', date: '2026-09-29', weightKg: 81.2, note: 'Mais disposição' },
-  { id: 'w-4', date: '2026-10-06', weightKg: 80.4, note: 'Cardio aumentado' },
-  { id: 'w-5', date: '2026-10-13', weightKg: 79.8, note: 'Definição visível' },
+  { id: 'w-1', studentId: 'aluno-lucas', date: '2026-09-15', weightKg: 82.5, note: 'Início da rotina' },
+  { id: 'w-2', studentId: 'aluno-lucas', date: '2026-09-22', weightKg: 81.8, note: 'Fim da semana 1' },
+  { id: 'w-3', studentId: 'aluno-lucas', date: '2026-09-29', weightKg: 81.2, note: 'Mais disposição' },
+  { id: 'w-4', studentId: 'aluno-lucas', date: '2026-10-06', weightKg: 80.4, note: 'Cardio aumentado' },
+  { id: 'w-5', studentId: 'aluno-lucas', date: '2026-10-13', weightKg: 79.8, note: 'Definição visível' },
+  // Mariana
+  { id: 'w-m1', studentId: 'aluna-mariana', date: '2026-10-01', weightKg: 62.0, note: 'Início com personal' },
+  { id: 'w-m2', studentId: 'aluna-mariana', date: '2026-10-14', weightKg: 61.2, note: 'Boa evolução' },
 ];
 
 // Histórico inicial de treinos
 export const DEFAULT_LOGS: WorkoutLog[] = [
   {
     id: 'log-1',
+    studentId: 'aluno-lucas',
     date: '2026-10-12',
     workoutName: 'Treino A - Peito, Ombros & Tríceps',
-    workoutPlanId: 'plan-a',
+    workoutPlanId: 'plan-a-lucas',
     durationMinutes: 52,
     notes: 'Treino rendeu muito bem!',
     completedExercises: [
@@ -97,9 +122,10 @@ export const DEFAULT_LOGS: WorkoutLog[] = [
   },
   {
     id: 'log-2',
+    studentId: 'aluno-lucas',
     date: '2026-10-14',
     workoutName: 'Treino B - Costas & Bíceps',
-    workoutPlanId: 'plan-b',
+    workoutPlanId: 'plan-b-lucas',
     durationMinutes: 48,
     notes: 'Boa contração nas costas',
     completedExercises: [
@@ -118,8 +144,8 @@ export const DEFAULT_LOGS: WorkoutLog[] = [
   },
 ];
 
-// Funções de Leitura e Escrita Locais
-export function getStoredPlans(): WorkoutPlan[] {
+// LEITURA E GRAVAÇÃO COM ISOLAMENTO POR ALUNO
+export function getAllStoredPlans(): WorkoutPlan[] {
   try {
     const raw = localStorage.getItem(KEYS.PLANS);
     if (raw) return JSON.parse(raw);
@@ -130,11 +156,34 @@ export function getStoredPlans(): WorkoutPlan[] {
   return DEFAULT_PLANS;
 }
 
-export function saveStoredPlans(plans: WorkoutPlan[]) {
+export function saveAllStoredPlans(plans: WorkoutPlan[]) {
   localStorage.setItem(KEYS.PLANS, JSON.stringify(plans));
 }
 
-export function getStoredLogs(): WorkoutLog[] {
+export function getPlansForStudent(studentId: string): WorkoutPlan[] {
+  const all = getAllStoredPlans();
+  return all.filter((p) => p.studentId === studentId);
+}
+
+export function savePlanForStudent(plan: WorkoutPlan) {
+  const all = getAllStoredPlans();
+  const index = all.findIndex((p) => p.id === plan.id);
+  if (index >= 0) {
+    all[index] = plan;
+  } else {
+    all.push(plan);
+  }
+  saveAllStoredPlans(all);
+}
+
+export function deletePlanForStudent(planId: string) {
+  const all = getAllStoredPlans();
+  const filtered = all.filter((p) => p.id !== planId);
+  saveAllStoredPlans(filtered);
+}
+
+// LOGS
+export function getAllStoredLogs(): WorkoutLog[] {
   try {
     const raw = localStorage.getItem(KEYS.LOGS);
     if (raw) return JSON.parse(raw);
@@ -145,11 +194,28 @@ export function getStoredLogs(): WorkoutLog[] {
   return DEFAULT_LOGS;
 }
 
-export function saveStoredLogs(logs: WorkoutLog[]) {
+export function saveAllStoredLogs(logs: WorkoutLog[]) {
   localStorage.setItem(KEYS.LOGS, JSON.stringify(logs));
 }
 
-export function getStoredWeights(): WeightEntry[] {
+export function getLogsForStudent(studentId: string): WorkoutLog[] {
+  const all = getAllStoredLogs();
+  return all.filter((l) => l.studentId === studentId).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export function saveLogForStudent(log: WorkoutLog) {
+  const all = getAllStoredLogs();
+  const index = all.findIndex((l) => l.id === log.id);
+  if (index >= 0) {
+    all[index] = log;
+  } else {
+    all.unshift(log);
+  }
+  saveAllStoredLogs(all);
+}
+
+// PESOS
+export function getAllStoredWeights(): WeightEntry[] {
   try {
     const raw = localStorage.getItem(KEYS.WEIGHTS);
     if (raw) return JSON.parse(raw);
@@ -160,38 +226,66 @@ export function getStoredWeights(): WeightEntry[] {
   return DEFAULT_WEIGHTS;
 }
 
-export function saveStoredWeights(weights: WeightEntry[]) {
+export function saveAllStoredWeights(weights: WeightEntry[]) {
   localStorage.setItem(KEYS.WEIGHTS, JSON.stringify(weights));
 }
 
-// SINCRONIZAÇÃO COM SUPABASE NA NUVEM
-export async function syncPlansWithCloud(): Promise<WorkoutPlan[]> {
+export function getWeightsForStudent(studentId: string): WeightEntry[] {
+  const all = getAllStoredWeights();
+  return all.filter((w) => w.studentId === studentId).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+export function saveWeightForStudent(weight: WeightEntry) {
+  const all = getAllStoredWeights();
+  const filtered = all.filter((w) => !(w.studentId === weight.studentId && w.date === weight.date));
+  filtered.push(weight);
+  saveAllStoredWeights(filtered);
+}
+
+export function deleteWeightForStudent(weightId: string) {
+  const all = getAllStoredWeights();
+  const filtered = all.filter((w) => w.id !== weightId);
+  saveAllStoredWeights(filtered);
+}
+
+// ==========================================
+// SINCRONIZAÇÃO EM NUVEM VIA SUPABASE
+// ==========================================
+
+export async function syncPlansForStudent(studentId: string): Promise<WorkoutPlan[]> {
   const supabase = getSupabaseClient();
-  const local = getStoredPlans();
+  const local = getPlansForStudent(studentId);
   if (!supabase) return local;
 
   try {
-    const { data, error } = await supabase.from('workout_plans').select('*');
-    if (error) {
-      console.warn('Erro ao baixar fichas do Supabase:', error.message);
-      return local;
-    }
+    const { data, error } = await supabase
+      .from('workout_plans')
+      .select('*')
+      .eq('student_id', studentId);
 
-    if (data && data.length > 0) {
+    if (!error && data && data.length > 0) {
       const parsed: WorkoutPlan[] = data.map((row: any) => ({
         id: row.id,
+        studentId: row.student_id,
+        createdBy: row.created_by,
         name: row.name,
         category: row.category,
         description: row.description,
         exercises: row.exercises || [],
+        updatedAt: row.updated_at,
       }));
-      saveStoredPlans(parsed);
+
+      // Atualiza localmente
+      const all = getAllStoredPlans().filter((p) => p.studentId !== studentId);
+      saveAllStoredPlans([...all, ...parsed]);
       return parsed;
-    } else {
-      // Se a tabela do Supabase estiver vazia, sobe os dados locais para lá
+    } else if (local.length > 0) {
+      // Sobe dados locais para o Supabase
       for (const p of local) {
         await supabase.from('workout_plans').upsert({
           id: p.id,
+          student_id: p.studentId,
+          created_by: p.createdBy || null,
           name: p.name,
           category: p.category,
           description: p.description,
@@ -200,7 +294,7 @@ export async function syncPlansWithCloud(): Promise<WorkoutPlan[]> {
       }
     }
   } catch (err) {
-    console.error('Falha na sincronização do Supabase:', err);
+    console.error('Falha na sincronização de treinos no Supabase:', err);
   }
   return local;
 }
@@ -211,6 +305,8 @@ export async function uploadPlanToCloud(plan: WorkoutPlan) {
   try {
     await supabase.from('workout_plans').upsert({
       id: plan.id,
+      student_id: plan.studentId,
+      created_by: plan.createdBy || null,
       name: plan.name,
       category: plan.category,
       description: plan.description,
@@ -237,6 +333,7 @@ export async function uploadLogToCloud(log: WorkoutLog) {
   try {
     await supabase.from('workout_logs').upsert({
       id: log.id,
+      student_id: log.studentId,
       date: log.date,
       workout_name: log.workoutName,
       workout_plan_id: log.workoutPlanId,
@@ -249,16 +346,22 @@ export async function uploadLogToCloud(log: WorkoutLog) {
   }
 }
 
-export async function syncLogsWithCloud(): Promise<WorkoutLog[]> {
+export async function syncLogsForStudent(studentId: string): Promise<WorkoutLog[]> {
   const supabase = getSupabaseClient();
-  const local = getStoredLogs();
+  const local = getLogsForStudent(studentId);
   if (!supabase) return local;
 
   try {
-    const { data, error } = await supabase.from('workout_logs').select('*').order('date', { ascending: false });
+    const { data, error } = await supabase
+      .from('workout_logs')
+      .select('*')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false });
+
     if (!error && data && data.length > 0) {
       const parsed: WorkoutLog[] = data.map((row: any) => ({
         id: row.id,
+        studentId: row.student_id,
         date: row.date,
         workoutName: row.workout_name,
         workoutPlanId: row.workout_plan_id,
@@ -266,7 +369,8 @@ export async function syncLogsWithCloud(): Promise<WorkoutLog[]> {
         completedExercises: row.completed_exercises || [],
         notes: row.notes,
       }));
-      saveStoredLogs(parsed);
+      const all = getAllStoredLogs().filter((l) => l.studentId !== studentId);
+      saveAllStoredLogs([...all, ...parsed]);
       return parsed;
     }
   } catch (e) {
@@ -281,6 +385,7 @@ export async function uploadWeightToCloud(entry: WeightEntry) {
   try {
     await supabase.from('weight_entries').upsert({
       id: entry.id,
+      student_id: entry.studentId,
       date: entry.date,
       weight_kg: entry.weightKg,
       note: entry.note,
@@ -290,21 +395,28 @@ export async function uploadWeightToCloud(entry: WeightEntry) {
   }
 }
 
-export async function syncWeightsWithCloud(): Promise<WeightEntry[]> {
+export async function syncWeightsForStudent(studentId: string): Promise<WeightEntry[]> {
   const supabase = getSupabaseClient();
-  const local = getStoredWeights();
+  const local = getWeightsForStudent(studentId);
   if (!supabase) return local;
 
   try {
-    const { data, error } = await supabase.from('weight_entries').select('*').order('date', { ascending: true });
+    const { data, error } = await supabase
+      .from('weight_entries')
+      .select('*')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false });
+
     if (!error && data && data.length > 0) {
       const parsed: WeightEntry[] = data.map((row: any) => ({
         id: row.id,
+        studentId: row.student_id,
         date: row.date,
         weightKg: Number(row.weight_kg),
         note: row.note,
       }));
-      saveStoredWeights(parsed);
+      const all = getAllStoredWeights().filter((w) => w.studentId !== studentId);
+      saveAllStoredWeights([...all, ...parsed]);
       return parsed;
     }
   } catch (e) {

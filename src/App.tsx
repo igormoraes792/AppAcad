@@ -7,17 +7,27 @@ import { TodayScreen } from './screens/TodayScreen';
 import { WorkoutsScreen } from './screens/WorkoutsScreen';
 import { WeightScreen } from './screens/WeightScreen';
 import { EvolutionScreen } from './screens/EvolutionScreen';
+import { AuthScreen } from './screens/AuthScreen';
+import { ProfessorScreen } from './screens/ProfessorScreen';
 import {
-  getStoredPlans,
-  getStoredLogs,
-  getStoredWeights,
-  syncPlansWithCloud,
-  syncLogsWithCloud,
-  syncWeightsWithCloud,
+  getCurrentUser,
+  setCurrentUser as saveSessionUser,
+  logoutUser,
+} from './lib/auth';
+import {
+  getPlansForStudent,
+  getLogsForStudent,
+  getWeightsForStudent,
+  syncPlansForStudent,
+  syncLogsForStudent,
+  syncWeightsForStudent,
 } from './lib/storage';
-import type { WorkoutPlan, WorkoutLog, WeightEntry } from './types';
+import type { WorkoutPlan, WorkoutLog, WeightEntry, UserProfile } from './types';
 
 export function App() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(getCurrentUser());
+  const [simulatingStudent, setSimulatingStudent] = useState<UserProfile | null>(null);
+
   const [currentTab, setCurrentTab] = useState<TabType>('hoje');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activePlanToStart, setActivePlanToStart] = useState<string | null>(null);
@@ -26,48 +36,103 @@ export function App() {
   const [logs, setLogs] = useState<WorkoutLog[]>([]);
   const [weights, setWeights] = useState<WeightEntry[]>([]);
 
-  // Carrega dados locais e tenta sincronizar com a nuvem
-  const loadData = async () => {
-    // Carregamento rápido local imediato
-    setPlans(getStoredPlans());
-    setLogs(getStoredLogs());
-    setWeights(getStoredWeights());
+  // O aluno em foco (seja o próprio aluno logado ou o aluno sendo simulado pelo personal)
+  const activeStudent = simulatingStudent || (currentUser?.role === 'aluno' ? currentUser : null);
 
-    // Sincronização assíncrona com Supabase se configurado
+  // Carrega dados do aluno em foco
+  const loadStudentData = async (student: UserProfile) => {
+    // 1. Carregamento rápido local imediato
+    setPlans(getPlansForStudent(student.id));
+    setLogs(getLogsForStudent(student.id));
+    setWeights(getWeightsForStudent(student.id));
+
+    // 2. Sincronização em segundo plano com Supabase se configurado
     try {
       const [cloudPlans, cloudLogs, cloudWeights] = await Promise.all([
-        syncPlansWithCloud(),
-        syncLogsWithCloud(),
-        syncWeightsWithCloud(),
+        syncPlansForStudent(student.id),
+        syncLogsForStudent(student.id),
+        syncWeightsForStudent(student.id),
       ]);
       setPlans(cloudPlans);
       setLogs(cloudLogs);
       setWeights(cloudWeights);
     } catch (e) {
-      console.warn('Sincronização em nuvem pendente ou offline', e);
+      console.warn('Sincronização em nuvem offline ou pendente:', e);
     }
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (activeStudent) {
+      loadStudentData(activeStudent);
+    }
+  }, [activeStudent?.id]);
 
-  const handleStartPlanFromWorkouts = (planId: string) => {
-    setActivePlanToStart(planId);
-    setCurrentTab('hoje');
+  const handleLoginSuccess = (user: UserProfile) => {
+    setCurrentUser(user);
+    saveSessionUser(user);
+    if (user.role === 'aluno') {
+      loadStudentData(user);
+    }
   };
+
+  const handleLogout = () => {
+    logoutUser();
+    setCurrentUser(null);
+    setSimulatingStudent(null);
+  };
+
+  // Se nenhum usuário estiver logado, exibe tela de login / cadastro
+  if (!currentUser) {
+    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // Se for professor e NÃO estiver simulando um aluno, exibe o painel do professor
+  if (currentUser.role === 'professor' && !simulatingStudent) {
+    return (
+      <>
+        <ProfessorScreen
+          currentUser={currentUser}
+          onLogout={handleLogout}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onSimulateStudent={(student) => {
+            setSimulatingStudent(student);
+            setCurrentTab('hoje');
+          }}
+        />
+
+        {/* Modal do Supabase acessível no painel do professor */}
+        <SupabaseModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          onConfigUpdated={() => {
+            if (activeStudent) loadStudentData(activeStudent);
+          }}
+        />
+      </>
+    );
+  }
+
+  // VISÃO DO ALUNO (OU SIMULAÇÃO DO PROFESSOR)
+  // O aluno NUNCA vê configurações técnicas de banco. Tudo é 100% automático.
+  const targetStudent = activeStudent || currentUser;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
-      {/* Barra de Status e Topo */}
-      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
+      {/* Topo do Aluno */}
+      <Header
+        currentUser={targetStudent}
+        onLogout={handleLogout}
+        isSimulating={Boolean(simulatingStudent)}
+        onExitSimulation={() => setSimulatingStudent(null)}
+      />
 
-      {/* Conteúdo Principal com scroll e largura otimizada para iPhone/Mobile */}
+      {/* Conteúdo Principal com largura e comportamento otimizado para iPhone */}
       <main className="flex-1 w-full max-w-lg mx-auto overflow-y-auto">
         {currentTab === 'hoje' && (
           <TodayScreen
+            studentId={targetStudent.id}
             plans={plans}
-            onWorkoutFinished={loadData}
+            onWorkoutFinished={() => loadStudentData(targetStudent)}
             activePlanId={activePlanToStart}
             setActivePlanId={setActivePlanToStart}
           />
@@ -75,16 +140,21 @@ export function App() {
 
         {currentTab === 'treinos' && (
           <WorkoutsScreen
+            studentId={targetStudent.id}
             plans={plans}
-            onPlansUpdated={loadData}
-            onSelectPlanToStart={handleStartPlanFromWorkouts}
+            onPlansUpdated={() => loadStudentData(targetStudent)}
+            onSelectPlanToStart={(planId) => {
+              setActivePlanToStart(planId);
+              setCurrentTab('hoje');
+            }}
           />
         )}
 
         {currentTab === 'pesos' && (
           <WeightScreen
+            studentId={targetStudent.id}
             weights={weights}
-            onWeightsUpdated={loadData}
+            onWeightsUpdated={() => loadStudentData(targetStudent)}
           />
         )}
 
@@ -96,18 +166,11 @@ export function App() {
         )}
       </main>
 
-      {/* Barra de Abas Inferior estilo iOS */}
+      {/* Barra de Navegação Inferior estilo iOS */}
       <BottomNav
         currentTab={currentTab}
         onChangeTab={setCurrentTab}
         isWorkoutActive={false}
-      />
-
-      {/* Modal de Configuração do Banco Online Supabase */}
-      <SupabaseModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        onConfigUpdated={loadData}
       />
     </div>
   );

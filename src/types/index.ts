@@ -1,3 +1,17 @@
+export type UserRole = 'aluno' | 'professor';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  instructorId?: string;
+  instructorName?: string;
+  phone?: string;
+  avatarUrl?: string;
+  createdAt: string;
+}
+
 export interface SetLog {
   setNumber: number;
   weightKg: number;
@@ -18,10 +32,13 @@ export interface ExerciseTemplate {
 
 export interface WorkoutPlan {
   id: string;
+  studentId: string; // ID do aluno ao qual o treino pertence
+  createdBy?: string; // ID do professor que criou
   name: string;
   category: string; // Ex: 'Treino A', 'Treino B', etc.
   description?: string;
   exercises: ExerciseTemplate[];
+  updatedAt?: string;
 }
 
 export interface CompletedExerciseLog {
@@ -33,6 +50,7 @@ export interface CompletedExerciseLog {
 
 export interface WorkoutLog {
   id: string;
+  studentId: string; // ID do aluno que realizou o treino
   date: string; // YYYY-MM-DD
   workoutName: string;
   workoutPlanId?: string;
@@ -43,6 +61,7 @@ export interface WorkoutLog {
 
 export interface WeightEntry {
   id: string;
+  studentId: string; // ID do aluno
   date: string; // YYYY-MM-DD
   weightKg: number;
   note?: string;
@@ -53,4 +72,3 @@ export interface SupabaseConfig {
   anonKey: string;
   isConnected: boolean;
 }
-

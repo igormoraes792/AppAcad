@@ -13,9 +13,14 @@ import {
 import confetti from 'canvas-confetti';
 import type { WorkoutPlan, WorkoutLog, CompletedExerciseLog } from '../types';
 import { RestTimer } from '../components/RestTimer';
-import { uploadLogToCloud, saveStoredLogs, getStoredLogs, saveStoredPlans, getStoredPlans } from '../lib/storage';
+import {
+  uploadLogToCloud,
+  saveLogForStudent,
+  savePlanForStudent,
+} from '../lib/storage';
 
 interface TodayScreenProps {
+  studentId: string;
   plans: WorkoutPlan[];
   onWorkoutFinished: () => void;
   activePlanId: string | null;
@@ -36,6 +41,7 @@ interface ActiveExerciseState {
 }
 
 export const TodayScreen: React.FC<TodayScreenProps> = ({
+  studentId,
   plans,
   onWorkoutFinished,
   activePlanId,
@@ -49,6 +55,13 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
   const [restSeconds, setRestSeconds] = useState(60);
   const [workoutFinishedSummary, setWorkoutFinishedSummary] = useState<WorkoutLog | null>(null);
 
+  // Atualiza seleção se os planos mudarem
+  useEffect(() => {
+    if (plans.length > 0 && !plans.some((p) => p.id === selectedPlanId)) {
+      setSelectedPlanId(plans[0].id);
+    }
+  }, [plans]);
+
   // Se uma ficha for ativada de outra tela
   useEffect(() => {
     if (activePlanId) {
@@ -59,7 +72,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
         setActivePlanId(null);
       }
     }
-  }, [activePlanId]);
+  }, [activePlanId, plans]);
 
   // Cronômetro do treino ativo
   useEffect(() => {
@@ -172,6 +185,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
 
     const newLog: WorkoutLog = {
       id: `log-${Date.now()}`,
+      studentId: studentId,
       date: todayStr,
       workoutName: planName,
       workoutPlanId: selectedPlanId,
@@ -180,30 +194,24 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
       notes: `Treino finalizado em ${durationMinutes} min.`,
     };
 
-    // Atualiza últimos pesos nas fichas
-    const currentPlans = getStoredPlans();
-    const updatedPlans = currentPlans.map((p) => {
-      if (p.id === selectedPlanId) {
-        return {
-          ...p,
-          exercises: p.exercises.map((ex) => {
-            const finishedEx = activeExercises.find((ae) => ae.exerciseId === ex.id);
-            if (finishedEx) {
-              const maxWeight = Math.max(...finishedEx.sets.map((s) => s.weightKg), ex.lastWeightKg || 0);
-              return { ...ex, lastWeightKg: maxWeight };
-            }
-            return ex;
-          }),
-        };
-      }
-      return p;
-    });
-    saveStoredPlans(updatedPlans);
+    // Atualiza últimos pesos nas fichas do aluno
+    if (plan) {
+      const updatedPlan = {
+        ...plan,
+        exercises: plan.exercises.map((ex) => {
+          const finishedEx = activeExercises.find((ae) => ae.exerciseId === ex.id);
+          if (finishedEx) {
+            const maxWeight = Math.max(...finishedEx.sets.map((s) => s.weightKg), ex.lastWeightKg || 0);
+            return { ...ex, lastWeightKg: maxWeight };
+          }
+          return ex;
+        }),
+      };
+      savePlanForStudent(updatedPlan);
+    }
 
     // Salva o log do treino
-    const currentLogs = getStoredLogs();
-    const newLogs = [newLog, ...currentLogs];
-    saveStoredLogs(newLogs);
+    saveLogForStudent(newLog);
     await uploadLogToCloud(newLog);
 
     // Efeito de confetes no iPhone!
@@ -235,7 +243,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
       return (
         acc +
         ex.sets.reduce((sAcc, set) => {
-          return sAcc + (set.weightKg * set.reps);
+          return sAcc + set.weightKg * set.reps;
         }, 0)
       );
     }, 0);
@@ -452,43 +460,51 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
           {/* Seletor de Fichas */}
           <div className="mt-4 space-y-2">
             <label className="text-xs font-semibold text-zinc-300">Escolha o treino:</label>
-            <div className="grid grid-cols-1 gap-2">
-              {plans.map((p) => {
-                const isSelected = p.id === selectedPlanId;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setSelectedPlanId(p.id)}
-                    className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between ${
-                      isSelected
-                        ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-md shadow-indigo-500/10'
-                        : 'bg-zinc-950/60 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                    }`}
-                  >
-                    <div>
-                      <span className="text-xs font-bold text-indigo-400">{p.category}</span>
-                      <h4 className="text-sm font-semibold text-white">{p.name}</h4>
-                      <p className="text-[11px] text-zinc-400">{p.exercises.length} exercícios</p>
-                    </div>
-                    {isSelected && (
-                      <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-white">
-                        <Play className="w-3 h-3 fill-white ml-0.5" />
+            {plans.length === 0 ? (
+              <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800 text-center text-xs text-zinc-400">
+                Seu professor ainda não cadastrou treinos para você. Fale com seu personal!
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-2">
+                {plans.map((p) => {
+                  const isSelected = p.id === selectedPlanId;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setSelectedPlanId(p.id)}
+                      className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-md shadow-indigo-500/10'
+                          : 'bg-zinc-950/60 border-zinc-800 text-zinc-300 hover:border-zinc-700'
+                      }`}
+                    >
+                      <div>
+                        <span className="text-xs font-bold text-indigo-400">{p.category}</span>
+                        <h4 className="text-sm font-semibold text-white">{p.name}</h4>
+                        <p className="text-[11px] text-zinc-400">{p.exercises.length} exercícios</p>
                       </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                      {isSelected && (
+                        <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center text-white">
+                          <Play className="w-3 h-3 fill-white ml-0.5" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Botão Iniciar Treino */}
-          <button
-            onClick={handleStartWorkout}
-            className="w-full mt-4 py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 active:scale-98 text-white font-bold rounded-2xl shadow-xl shadow-indigo-600/30 flex items-center justify-center space-x-2 text-base transition-all"
-          >
-            <Play className="w-5 h-5 fill-white" />
-            <span>Iniciar Treino Agora</span>
-          </button>
+          {plans.length > 0 && (
+            <button
+              onClick={handleStartWorkout}
+              className="w-full mt-4 py-3.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 active:scale-98 text-white font-bold rounded-2xl shadow-xl shadow-indigo-600/30 flex items-center justify-center space-x-2 text-base transition-all"
+            >
+              <Play className="w-5 h-5 fill-white" />
+              <span>Iniciar Treino Agora</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

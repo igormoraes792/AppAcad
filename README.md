@@ -1,59 +1,66 @@
-# FitTrack - App para iPhone (PWA)
+# FitTrack PRO - App para iPhone (PWA) com Perfis de Aluno e Personal
 
-Aplicativo fitness mobile-first otimizado para iPhone, com suporte a **Safe Area**, **PWA instalável**, interface no estilo nativo iOS e integração com banco de dados na nuvem (**Supabase**) sem servidor local.
-
----
-
-## 📱 Funcionalidades Desenvolvidas
-
-1. **Treino do Dia (Hoje / Treinando)**
-   - Início em tempo real com cronômetro de duração.
-   - Lista de exercícios divididos por séries com inputs rápidos de Peso (kg) e Repetições.
-   - Botão de "Check" com vibração háptica no celular.
-   - **Cronômetro de descanso integrado** com botões rápidos (+15s, 60s, 90s, 2min) que abre automaticamente após marcar a série como concluída.
-   - Conclusão de treino com cálculo de volume e efeito de confetes na tela.
-
-2. **Fichas de Treino (Treinos)**
-   - Fichas pré-configuradas (Treino A, B e C) com exercícios, repetições alvo e descanso recomendado.
-   - Criar novas fichas de treino personalizadas.
-   - Adicionar ou remover exercícios de qualquer ficha.
-   - Botão "Play" para iniciar qualquer treino diretamente.
-
-3. **Controle de Pesos (Pesos)**
-   - Registro de pesagem corporal com data e anotações.
-   - Card com peso atual e cálculo automático da variação total desde o início.
-   - Badge inteligente comparando com a pesagem anterior (+0.3 kg / -0.5 kg).
-
-4. **Histórico de Evolução (Evolução)**
-   - **Gráfico SVG de Evolução de Peso Corporal**: visualização intuitiva da tendência.
-   - **Evolução de Cargas por Exercício**: selecione qualquer exercício (ex: *Supino Reto*) e veja o histórico de aumento de carga e repetições.
-   - Linha do tempo com todos os treinos concluídos no mês e séries detalhadas.
+Aplicativo fitness mobile-first otimizado para iPhone, com suporte a **Safe Area**, **PWA instalável**, interface no estilo nativo iOS, **sistema de Alunos e Personal Trainer** e banco de dados na nuvem (**Supabase**) sem necessidade de servidor local.
 
 ---
 
-## 🚀 Como testar no iPhone agora mesmo
+## 👥 Sistema de Perfis (Aluno & Professor)
 
-1. No seu computador, execute:
+### 🏋️ Visão do Aluno:
+- **100% Automático**: O aluno **não precisa mexer em banco de dados ou configurações técnicas**. Ele apenas abre o app, faz login e treina.
+- **Treino do Dia (Hoje)**: Executa as fichas montadas pelo seu personal com cronômetro de duração, inputs fáceis de carga e reps, vibração no iPhone e **cronômetro de descanso automático**.
+- **Fichas de Treino**: Visualiza as fichas (Treino A, B, C...) criadas especificamente para ele pelo personal.
+- **Controle de Peso**: Registra pesagens e vê a variação desde o início.
+- **Evolução**: Gráficos de peso e evolução de cargas por exercício.
+
+### 👨‍🏫 Visão do Professor (Personal Trainer):
+- **Painel de Gestão**: Lista todos os alunos cadastrados com busca rápida.
+- **Montagem de Treinos**: Entra no perfil de qualquer aluno e cria, edita ou exclui fichas (Treino A, B, etc.) e adiciona exercícios com metas de séries, repetições, descanso e carga inicial.
+- **Acompanhamento**: Visualiza o histórico de treinos concluídos pelo aluno e as pesagens.
+- **Simulador do Aluno**: Botão *"Simular Visão do Aluno"* para ver exatamente o que aquele aluno vê na tela dele.
+- **Cadastrar Novos Alunos**: Botão para adicionar alunos diretamente pelo painel.
+
+---
+
+## ☁️ Como Vincular o Supabase ao seu App (Passo a Passo Simples)
+
+Você não precisa de servidor local. O Supabase é um banco de dados PostgreSQL na nuvem gratuito.
+
+### Passo 1: Pegar as 2 chaves no Supabase
+1. Acesse [supabase.com](https://supabase.com) e entre no seu projeto.
+2. No menu lateral esquerdo, clique no ícone de engrenagem (**Project Settings**).
+3. Clique em **API** (ou **Data API**).
+4. Lá você verá:
+   - **Project URL** (algo como `https://xyzcompany.supabase.co`)
+   - **Project API Keys → `anon` `public`** (chave longa começando com `eyJ...`)
+
+### Passo 2: Criar as Tabelas no Supabase (com 1 clique)
+1. No menu lateral esquerdo do Supabase, clique em **SQL Editor**.
+2. Clique em **New Query**.
+3. No seu app, entre como Professor, clique no ícone de banco/engrenagem no topo e clique em **"Copiar Script SQL"** (ou copie do arquivo `src/lib/supabase.ts`).
+4. Cole no SQL Editor do Supabase e clique no botão verde **Run**.
+5. Pronto! Todas as tabelas (`profiles`, `workout_plans`, `workout_logs`, `weight_entries`) e permissões são criadas instantaneamente.
+
+### Passo 3: Conectar no App (ou na Vercel)
+- **Opção A (Direto no App)**: No painel do professor, clique no ícone de banco no topo, cole a URL e a Anon Key e clique em **Salvar Conexão**. Ficará salvo e ativo!
+- **Opção B (Automático para todos os usuários via Vercel / .env)**:
+  - Crie um arquivo `.env` na raiz do projeto com:
+    ```env
+    VITE_SUPABASE_URL=https://seu-projeto.supabase.co
+    VITE_SUPABASE_ANON_KEY=sua-chave-anon-publica-aqui
+    ```
+  - Na **Vercel** (se for hospedar online): Vá em *Settings → Environment Variables*, adicione `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. Assim, qualquer aluno ou professor que abrir o site já estará conectado automaticamente sem ver telas técnicas!
+
+---
+
+## 🚀 Como testar agora mesmo no seu iPhone ou Computador
+
+1. No terminal do projeto, execute:
    ```bash
    npm run dev
    ```
-2. O terminal vai exibir dois endereços:
-   - Local: `http://localhost:5173/`
-   - **Network**: `http://192.168.X.X:5173/`
-3. Certifique-se de que seu iPhone está conectado no **mesmo Wi-Fi** do computador.
-4. Abra o **Safari no iPhone** e digite o endereço Network (ex: `http://192.168.1.15:5173`).
-5. No Safari, toque no botão **Compartilhar (ícone do quadrado com seta para cima)**.
-6. Role para baixo e selecione **"Adicionar à Tela de Início"**.
-7. O ícone do app será criado na tela inicial do iPhone e abrirá **em tela cheia (sem barra do Safari)**!
-
----
-
-## ☁️ Conexão com Banco na Nuvem (Supabase)
-
-Você não precisa de servidor local ou VPS. O app funciona tanto offline (armazenamento local) quanto sincronizado com o Supabase.
-
-1. Crie uma conta gratuita em [supabase.com](https://supabase.com).
-2. Crie um projeto novo.
-3. No painel do Supabase, clique em **SQL Editor** e cole o script SQL gerado automaticamente pelo app (ou use o botão "Copiar Script SQL" no menu de configurações do próprio app).
-4. No app, clique no ícone de nuvem/engrenagem no topo, cole sua **Project URL** e **API Anon Key**.
-5. Pronto! Todas as fichas, treinos e pesagens são sincronizados na nuvem em tempo real.
+2. Abra no navegador do computador (`http://localhost:5173`) ou no Safari do iPhone (`http://192.168.X.X:5173`).
+3. Na tela inicial, utilize os botões de **Acesso Rápido para Teste**:
+   - **"Visão: Igor Personal"**: abre o painel do professor.
+   - **"Visão: Aluno Lucas"**: abre o app na perspectiva do aluno.
+   - Ou crie uma conta nova como Aluno ou Personal!

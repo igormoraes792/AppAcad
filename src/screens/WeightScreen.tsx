@@ -2,17 +2,22 @@ import React, { useState } from 'react';
 import { Scale, Plus, Trash2, TrendingDown, TrendingUp, Calendar } from 'lucide-react';
 import type { WeightEntry } from '../types';
 import {
-  saveStoredWeights,
-  getStoredWeights,
+  saveWeightForStudent,
+  deleteWeightForStudent,
   uploadWeightToCloud,
 } from '../lib/storage';
 
 interface WeightScreenProps {
+  studentId: string;
   weights: WeightEntry[];
   onWeightsUpdated: () => void;
 }
 
-export const WeightScreen: React.FC<WeightScreenProps> = ({ weights, onWeightsUpdated }) => {
+export const WeightScreen: React.FC<WeightScreenProps> = ({
+  studentId,
+  weights,
+  onWeightsUpdated,
+}) => {
   const [newWeight, setNewWeight] = useState('');
   const [newDate, setNewDate] = useState(new Date().toISOString().split('T')[0]);
   const [newNote, setNewNote] = useState('');
@@ -35,16 +40,13 @@ export const WeightScreen: React.FC<WeightScreenProps> = ({ weights, onWeightsUp
 
     const newEntry: WeightEntry = {
       id: `w-${Date.now()}`,
+      studentId: studentId,
       date: newDate,
       weightKg: weightNum,
       note: newNote.trim() || undefined,
     };
 
-    const current = getStoredWeights();
-    // Se já tiver peso na mesma data, atualiza ou adiciona
-    const filtered = current.filter((w) => w.date !== newDate);
-    const updated = [...filtered, newEntry];
-    saveStoredWeights(updated);
+    saveWeightForStudent(newEntry);
     await uploadWeightToCloud(newEntry);
 
     onWeightsUpdated();
@@ -55,9 +57,7 @@ export const WeightScreen: React.FC<WeightScreenProps> = ({ weights, onWeightsUp
 
   const handleDeleteWeight = (id: string) => {
     if (confirm('Deseja excluir este registro de peso?')) {
-      const current = getStoredWeights();
-      const updated = current.filter((w) => w.id !== id);
-      saveStoredWeights(updated);
+      deleteWeightForStudent(id);
       onWeightsUpdated();
     }
   };

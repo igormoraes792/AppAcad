@@ -10,19 +10,21 @@ import {
 } from 'lucide-react';
 import type { WorkoutPlan, ExerciseTemplate } from '../types';
 import {
-  saveStoredPlans,
-  getStoredPlans,
+  savePlanForStudent,
+  deletePlanForStudent,
   uploadPlanToCloud,
   deletePlanFromCloud,
 } from '../lib/storage';
 
 interface WorkoutsScreenProps {
+  studentId: string;
   plans: WorkoutPlan[];
   onPlansUpdated: () => void;
   onSelectPlanToStart: (planId: string) => void;
 }
 
 export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
+  studentId,
   plans,
   onPlansUpdated,
   onSelectPlanToStart,
@@ -54,15 +56,14 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
 
     const newPlan: WorkoutPlan = {
       id: `plan-${Date.now()}`,
+      studentId: studentId,
       category: newPlanCategory.trim() || 'Treino',
       name: newPlanName.trim(),
       description: newPlanDesc.trim(),
       exercises: [],
     };
 
-    const current = getStoredPlans();
-    const updated = [...current, newPlan];
-    saveStoredPlans(updated);
+    savePlanForStudent(newPlan);
     await uploadPlanToCloud(newPlan);
 
     onPlansUpdated();
@@ -74,9 +75,7 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
 
   const handleDeletePlan = async (planId: string) => {
     if (confirm('Tem certeza que deseja excluir esta ficha de treino?')) {
-      const current = getStoredPlans();
-      const updated = current.filter((p) => p.id !== planId);
-      saveStoredPlans(updated);
+      deletePlanForStudent(planId);
       await deletePlanFromCloud(planId);
       onPlansUpdated();
     }
@@ -96,11 +95,10 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
       lastWeightKg: Number(exWeight),
     };
 
-    const current = getStoredPlans();
-    const targetPlan = current.find((p) => p.id === showAddExerciseModal);
+    const targetPlan = plans.find((p) => p.id === showAddExerciseModal);
     if (targetPlan) {
       targetPlan.exercises.push(newEx);
-      saveStoredPlans(current);
+      savePlanForStudent(targetPlan);
       await uploadPlanToCloud(targetPlan);
       onPlansUpdated();
     }
@@ -111,11 +109,10 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
   };
 
   const handleDeleteExercise = async (planId: string, exId: string) => {
-    const current = getStoredPlans();
-    const targetPlan = current.find((p) => p.id === planId);
+    const targetPlan = plans.find((p) => p.id === planId);
     if (targetPlan) {
       targetPlan.exercises = targetPlan.exercises.filter((ex) => ex.id !== exId);
-      saveStoredPlans(current);
+      savePlanForStudent(targetPlan);
       await uploadPlanToCloud(targetPlan);
       onPlansUpdated();
     }
@@ -127,7 +124,7 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-black text-white">Fichas de Treino</h2>
-          <p className="text-xs text-zinc-400">Gerencie divisões e exercícios</p>
+          <p className="text-xs text-zinc-400">Suas divisões montadas pelo professor</p>
         </div>
         <button
           onClick={() => setShowAddPlanModal(true)}
@@ -140,127 +137,137 @@ export const WorkoutsScreen: React.FC<WorkoutsScreenProps> = ({
 
       {/* Lista de Fichas */}
       <div className="space-y-3">
-        {plans.map((plan) => {
-          const isExpanded = expandedPlanId === plan.id;
+        {plans.length === 0 ? (
+          <div className="p-6 text-center rounded-2xl bg-zinc-900 border border-dashed border-zinc-800 text-zinc-400 text-xs">
+            <Dumbbell className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+            <p className="font-semibold text-zinc-300">Nenhuma ficha cadastrada ainda.</p>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Peça para seu professor montar seu treino ou clique em "+ Nova Ficha".
+            </p>
+          </div>
+        ) : (
+          plans.map((plan) => {
+            const isExpanded = expandedPlanId === plan.id;
 
-          return (
-            <div
-              key={plan.id}
-              className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden transition-all shadow-sm"
-            >
-              {/* Header do Card */}
+            return (
               <div
-                onClick={() => toggleExpand(plan.id)}
-                className="p-4 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40 select-none"
+                key={plan.id}
+                className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden transition-all shadow-sm"
               >
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                    <Dumbbell className="w-5 h-5" />
+                {/* Header do Card */}
+                <div
+                  onClick={() => toggleExpand(plan.id)}
+                  className="p-4 flex items-center justify-between cursor-pointer hover:bg-zinc-800/40 select-none"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                      <Dumbbell className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+                        {plan.category}
+                      </span>
+                      <h3 className="text-sm font-bold text-white">{plan.name}</h3>
+                      <p className="text-[11px] text-zinc-400">
+                        {plan.exercises.length} exercícios {plan.description ? `• ${plan.description}` : ''}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
-                      {plan.category}
-                    </span>
-                    <h3 className="text-sm font-bold text-white">{plan.name}</h3>
-                    <p className="text-[11px] text-zinc-400">
-                      {plan.exercises.length} exercícios {plan.description ? `• ${plan.description}` : ''}
-                    </p>
-                  </div>
-                </div>
 
-                <div className="flex items-center space-x-1">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectPlanToStart(plan.id);
-                    }}
-                    className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md active:scale-90 transition mr-1"
-                    title="Iniciar este treino agora"
-                  >
-                    <Play className="w-4 h-4 fill-white ml-0.5" />
-                  </button>
-                  <button className="text-zinc-500 hover:text-zinc-300 p-1">
-                    {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Conteúdo expandido: Exercícios */}
-              {isExpanded && (
-                <div className="px-4 pb-4 pt-1 border-t border-zinc-800/60 bg-zinc-950/40 space-y-2.5 animate-in fade-in duration-150">
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-xs font-semibold text-zinc-400">Exercícios Programados</span>
+                  <div className="flex items-center space-x-1">
                     <button
-                      onClick={() => setShowAddExerciseModal(plan.id)}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectPlanToStart(plan.id);
+                      }}
+                      className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md active:scale-90 transition mr-1"
+                      title="Iniciar este treino agora"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      Adicionar Exercício
+                      <Play className="w-4 h-4 fill-white ml-0.5" />
+                    </button>
+                    <button className="text-zinc-500 hover:text-zinc-300 p-1">
+                      {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                   </div>
+                </div>
 
-                  {plan.exercises.length === 0 ? (
-                    <div className="p-4 text-center rounded-xl bg-zinc-900 border border-dashed border-zinc-800 text-zinc-500 text-xs">
-                      Nenhum exercício cadastrado ainda.
+                {/* Conteúdo expandido: Exercícios */}
+                {isExpanded && (
+                  <div className="px-4 pb-4 pt-1 border-t border-zinc-800/60 bg-zinc-950/40 space-y-2.5 animate-in fade-in duration-150">
+                    <div className="flex items-center justify-between pt-2">
+                      <span className="text-xs font-semibold text-zinc-400">Exercícios Programados</span>
+                      <button
+                        onClick={() => setShowAddExerciseModal(plan.id)}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Adicionar Exercício
+                      </button>
                     </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {plan.exercises.map((ex) => (
-                        <div
-                          key={ex.id}
-                          className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl p-3 flex items-center justify-between"
-                        >
-                          <div>
-                            <h4 className="text-xs font-bold text-white">{ex.name}</h4>
-                            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-zinc-400">
-                              <span className="text-indigo-400 font-medium">{ex.muscleGroup}</span>
-                              <span>•</span>
-                              <span>{ex.targetSets} séries</span>
-                              <span>•</span>
-                              <span>{ex.targetReps} reps</span>
-                              {ex.lastWeightKg ? (
-                                <>
-                                  <span>•</span>
-                                  <span className="text-zinc-300 font-semibold">{ex.lastWeightKg} kg</span>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
 
-                          <button
-                            onClick={() => handleDeleteExercise(plan.id, ex.id)}
-                            className="p-1.5 text-zinc-600 hover:text-red-400 transition"
-                            title="Remover exercício"
+                    {plan.exercises.length === 0 ? (
+                      <div className="p-4 text-center rounded-xl bg-zinc-900 border border-dashed border-zinc-800 text-zinc-500 text-xs">
+                        Nenhum exercício cadastrado ainda.
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {plan.exercises.map((ex) => (
+                          <div
+                            key={ex.id}
+                            className="bg-zinc-900/90 border border-zinc-800/80 rounded-xl p-3 flex items-center justify-between"
                           >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                            <div>
+                              <h4 className="text-xs font-bold text-white">{ex.name}</h4>
+                              <div className="flex items-center gap-2 mt-0.5 text-[11px] text-zinc-400">
+                                <span className="text-indigo-400 font-medium">{ex.muscleGroup}</span>
+                                <span>•</span>
+                                <span>{ex.targetSets} séries</span>
+                                <span>•</span>
+                                <span>{ex.targetReps} reps</span>
+                                {ex.lastWeightKg ? (
+                                  <>
+                                    <span>•</span>
+                                    <span className="text-zinc-300 font-semibold">{ex.lastWeightKg} kg</span>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
 
-                  {/* Ações inferiores do treino */}
-                  <div className="pt-2 flex items-center justify-between border-t border-zinc-800/60">
-                    <button
-                      onClick={() => handleDeletePlan(plan.id)}
-                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Excluir esta ficha
-                    </button>
-                    <button
-                      onClick={() => onSelectPlanToStart(plan.id)}
-                      className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-indigo-400" />
-                      Começar Treino
-                    </button>
+                            <button
+                              onClick={() => handleDeleteExercise(plan.id, ex.id)}
+                              className="p-1.5 text-zinc-600 hover:text-red-400 transition"
+                              title="Remover exercício"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Ações inferiores do treino */}
+                    <div className="pt-2 flex items-center justify-between border-t border-zinc-800/60">
+                      <button
+                        onClick={() => handleDeletePlan(plan.id)}
+                        className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Excluir esta ficha
+                      </button>
+                      <button
+                        onClick={() => onSelectPlanToStart(plan.id)}
+                        className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-indigo-400" />
+                        Começar Treino
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+                )}
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Modal Nova Ficha de Treino */}
