@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#09090b" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#09090b"/>
+  <circle cx="256" cy="256" r="220" fill="url(#glow)"/>
+  
+  <!-- Dumbbell / Lightning Modern Icon -->
+  <g transform="translate(96, 96) scale(0.625)" fill="none" stroke="url(#grad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Weight plates left -->
+    <rect x="70" y="160" width="45" height="192" rx="14" fill="#18181b" stroke="url(#grad)" stroke-width="24"/>
+    <rect x="130" y="195" width="35" height="122" rx="10" fill="#18181b" stroke="url(#grad)" stroke-width="24"/>
+    <!-- Bar -->
+    <line x1="165" y1="256" x2="347" y2="256" stroke="#f4f4f5" stroke-width="28"/>
+    <!-- Weight plates right -->
+    <rect x="347" y="195" width="35" height="122" rx="10" fill="#18181b" stroke="url(#grad)" stroke-width="24"/>
+    <rect x="397" y="160" width="45" height="192" rx="14" fill="#18181b" stroke="url(#grad)" stroke-width="24"/>
+    
+    <!-- Central pulse indicator -->
+    <circle cx="256" cy="256" r="16" fill="#a855f7" />
+  </g>
+</svg>
+

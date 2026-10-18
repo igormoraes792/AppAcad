@@ -1,0 +1,19 @@
+{
+  "name": "FitTrack - Treinos & Evolução",
+  "short_name": "FitTrack",
+  "description": "App de treinos, controle de cargas, peso corporal e evolução",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+
