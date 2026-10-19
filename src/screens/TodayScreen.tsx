@@ -297,7 +297,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
     const currentPlan = plans.find((p) => p.id === selectedPlanId);
 
     return (
-      <div className="p-4 space-y-4 pb-36">
+      <div className="p-4 space-y-4 pb-[380px]">
         {/* Barra superior de status do treino ativo */}
         <div className="bg-zinc-900/90 border border-indigo-500/30 rounded-2xl p-4 sticky top-14 z-20 backdrop-blur-lg shadow-lg flex items-center justify-between">
           <div>
