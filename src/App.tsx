@@ -9,6 +9,7 @@ import { WeightScreen } from './screens/WeightScreen';
 import { EvolutionScreen } from './screens/EvolutionScreen';
 import { AuthScreen } from './screens/AuthScreen';
 import { ProfessorScreen } from './screens/ProfessorScreen';
+import { ResetPasswordScreen } from './screens/ResetPasswordScreen';
 import {
   getCurrentUser,
   setCurrentUser as saveSessionUser,
@@ -22,11 +23,13 @@ import {
   syncLogsForStudent,
   syncWeightsForStudent,
 } from './lib/storage';
+import { getSupabaseClient } from './lib/supabase';
 import type { WorkoutPlan, WorkoutLog, WeightEntry, UserProfile } from './types';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(getCurrentUser());
   const [simulatingStudent, setSimulatingStudent] = useState<UserProfile | null>(null);
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const [currentTab, setCurrentTab] = useState<TabType>('hoje');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -38,6 +41,26 @@ export function App() {
 
   // O aluno em foco (seja o próprio aluno logado ou o aluno sendo simulado pelo personal)
   const activeStudent = simulatingStudent || (currentUser?.role === 'aluno' ? currentUser : null);
+
+  // Monitora evento de recuperação de senha do Supabase
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsResettingPassword(true);
+      }
+    });
+
+    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+      setIsResettingPassword(true);
+    }
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  }, []);
 
   // Carrega dados do aluno em foco
   const loadStudentData = async (student: UserProfile) => {
@@ -80,6 +103,20 @@ export function App() {
     setCurrentUser(null);
     setSimulatingStudent(null);
   };
+
+  // Se o aluno veio de um link de redefinição de senha enviado por e-mail
+  if (isResettingPassword) {
+    return (
+      <ResetPasswordScreen
+        onPasswordResetDone={() => {
+          setIsResettingPassword(false);
+          if (typeof window !== 'undefined' && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }}
+      />
+    );
+  }
 
   // Se nenhum usuário estiver logado, exibe tela de login / cadastro
   if (!currentUser) {

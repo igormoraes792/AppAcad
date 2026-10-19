@@ -250,3 +250,57 @@ export function logoutUser() {
   }
 }
 
+/**
+ * Envia e-mail de recuperação de senha com link seguro via Supabase
+ */
+export async function sendPasswordResetEmail(email: string): Promise<{ success: boolean; error?: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const supabase = getSupabaseClient();
+
+  if (supabase) {
+    try {
+      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao enviar e-mail de recuperação.' };
+    }
+  }
+
+  // Fallback para ambiente local de testes
+  const users = getStoredUsers();
+  const found = users.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (found) {
+    return { success: true };
+  }
+
+  return { success: false, error: 'E-mail não encontrado no sistema.' };
+}
+
+/**
+ * Atualiza a senha do usuário autenticado após clicar no link de recuperação
+ */
+export async function updateUserPassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Erro ao atualizar a senha.' };
+    }
+  }
+  return { success: true };
+}
+

@@ -98,3 +98,4 @@ git commit -m "feat: adicionar nova tela ou correcao"
 # 4. Envie para o GitHub (e a Vercel publica sozinha!)
 git push origin main
 ```
+
