@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dumbbell, LogOut, ArrowLeft } from 'lucide-react';
+import { Dumbbell, LogOut, ArrowLeft, KeyRound, ShieldCheck } from 'lucide-react';
 import type { UserProfile } from '../types';
 
 interface HeaderProps {
@@ -7,6 +7,9 @@ interface HeaderProps {
   onLogout: () => void;
   isSimulating?: boolean;
   onExitSimulation?: () => void;
+  onOpenChangePassword?: () => void;
+  isMasterAthlete?: boolean;
+  onExitMasterAthlete?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -14,11 +17,31 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   isSimulating,
   onExitSimulation,
+  onOpenChangePassword,
+  isMasterAthlete,
+  onExitMasterAthlete,
 }) => {
   return (
     <>
+      {/* Banner se a conta master estiver em modo atleta pessoal */}
+      {isMasterAthlete && onExitMasterAthlete && (
+        <div className="bg-gradient-to-r from-amber-600 to-amber-700 px-4 py-2 text-xs font-bold text-white flex items-center justify-between sticky top-0 z-50 shadow-md">
+          <span className="flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-amber-200" />
+            <span>Modo Atleta • Igor Moraes</span>
+          </span>
+          <button
+            onClick={onExitMasterAthlete}
+            className="flex items-center gap-1 bg-black/25 hover:bg-black/40 px-2.5 py-1 rounded-lg text-[11px] font-bold text-white transition active:scale-95"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Voltar ao Painel Master</span>
+          </button>
+        </div>
+      )}
+
       {/* Banner se o professor estiver simulando a visão do aluno */}
-      {isSimulating && onExitSimulation && (
+      {isSimulating && onExitSimulation && !isMasterAthlete && (
         <div className="bg-purple-600 px-4 py-2 text-xs font-bold text-white flex items-center justify-between sticky top-0 z-50">
           <span className="flex items-center gap-1.5">
             <span>👁️ Simulando aluno: <strong>{currentUser.name}</strong></span>
@@ -44,17 +67,31 @@ export const Header: React.FC<HeaderProps> = ({
                 <h1 className="text-sm font-bold tracking-tight text-white leading-none">
                   FitTrack
                 </h1>
-                <span className="text-[10px] font-semibold bg-indigo-500/20 text-indigo-400 px-1.5 py-0.2 rounded-full border border-indigo-500/30">
-                  ALUNO
+                <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded-full border ${
+                  isMasterAthlete
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                    : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                }`}>
+                  {isMasterAthlete ? 'MASTER ATLETA' : 'ALUNO'}
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 font-medium leading-tight mt-0.5">
-                {currentUser.name} {currentUser.instructorName ? `• Personal: ${currentUser.instructorName}` : ''}
+                {currentUser.name} {currentUser.instructorName && !isMasterAthlete ? `• Personal: ${currentUser.instructorName}` : ''}
               </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-1.5">
+            {onOpenChangePassword && (
+              <button
+                onClick={onOpenChangePassword}
+                className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition"
+                title="Alterar Minha Senha"
+              >
+                <KeyRound className="w-4 h-4" />
+              </button>
+            )}
+
             <button
               onClick={onLogout}
               className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-red-400 transition"

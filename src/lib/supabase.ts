@@ -167,7 +167,9 @@ export async function supabaseFetchProfile(idOrEmail: string): Promise<UserProfi
     // Detectar status da coluna ou extraído de fallback
     const statusMatch = data.phone?.match(/\[STATUS:(ativo|inativo)\]/);
     const status: UserStatus = (data.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
-    const cleanPhone = data.phone?.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') || undefined;
+    const resetMatch = data.phone?.match(/\[RESET:(true|false)\]/);
+    const mustResetPassword = resetMatch ? resetMatch[1] === 'true' : false;
+    const cleanPhone = data.phone?.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '').trim() || undefined;
 
     const isAdmin = data.email?.toLowerCase().trim() === 'igormoraes792@gmail.com' || data.role === 'admin';
 
@@ -178,6 +180,7 @@ export async function supabaseFetchProfile(idOrEmail: string): Promise<UserProfi
       role: isAdmin ? 'admin' : data.role,
       status,
       isAdmin,
+      mustResetPassword,
       instructorId: data.instructor_id,
       instructorName: data.instructor_name,
       phone: cleanPhone,
@@ -194,8 +197,9 @@ export async function supabaseSaveProfile(profile: UserProfile): Promise<boolean
   if (!supabase) return false;
   try {
     const status = profile.status || 'ativo';
-    const basePhone = profile.phone ? profile.phone.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') : '';
-    const phoneWithFallback = `${basePhone} [STATUS:${status}]`.trim();
+    const resetTag = profile.mustResetPassword ? ' [RESET:true]' : '';
+    const basePhone = profile.phone ? profile.phone.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '') : '';
+    const phoneWithFallback = `${basePhone} [STATUS:${status}]${resetTag}`.trim();
 
     // Tenta salvar com coluna status
     const payload: any = {
@@ -234,7 +238,9 @@ export async function supabaseFetchStudents(instructorId: string, isMasterAdmin:
     return data.map((d: any) => {
       const statusMatch = d.phone?.match(/\[STATUS:(ativo|inativo)\]/);
       const status: UserStatus = (d.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
-      const cleanPhone = d.phone?.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') || undefined;
+      const resetMatch = d.phone?.match(/\[RESET:(true|false)\]/);
+      const mustResetPassword = resetMatch ? resetMatch[1] === 'true' : false;
+      const cleanPhone = d.phone?.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '').trim() || undefined;
 
       return {
         id: d.id,
@@ -242,6 +248,7 @@ export async function supabaseFetchStudents(instructorId: string, isMasterAdmin:
         name: d.name,
         role: d.role,
         status,
+        mustResetPassword,
         instructorId: d.instructor_id,
         instructorName: d.instructor_name,
         phone: cleanPhone,

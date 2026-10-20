@@ -6,6 +6,7 @@ import {
   supabaseFetchStudents,
   supabaseUpdateStudentStatus,
 } from './supabase';
+import { addSystemLog } from './logger';
 
 const CURRENT_USER_KEY = 'fittrack_current_user';
 const USERS_LIST_KEY = 'fittrack_users_list';
@@ -93,7 +94,10 @@ export function setCurrentUser(user: UserProfile | null) {
 /**
  * Realiza login no sistema com validação de status ativo/inativo e suporte cloud-first
  */
-export async function loginUser(email: string, password?: string): Promise<{ user: UserProfile | null; error?: string }> {
+export async function loginUser(
+  email: string,
+  password?: string
+): Promise<{ user: UserProfile | null; error?: string; mustReset?: boolean }> {
   const cleanEmail = email.trim().toLowerCase();
   const supabase = getSupabaseClient();
 
@@ -105,6 +109,7 @@ export async function loginUser(email: string, password?: string): Promise<{ use
       if (cloudProfile) {
         // Checar se a conta está desativada
         if (cloudProfile.status === 'inativo') {
+          addSystemLog('warn', 'AUTH', `Tentativa de login em conta desativada: ${cleanEmail}`);
           return {
             user: null,
             error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
@@ -120,22 +125,26 @@ export async function loginUser(email: string, password?: string): Promise<{ use
 
           if (!error && data.user) {
             setCurrentUser(cloudProfile);
-            return { user: cloudProfile };
+            addSystemLog('success', 'AUTH', `Login via Supabase Auth realizado: ${cleanEmail}`);
+            return { user: cloudProfile, mustReset: Boolean(cloudProfile.mustResetPassword) };
           }
         }
 
         // Se for a conta Master com senha padrão ou teste
         if (cleanEmail === MASTER_ADMIN_EMAIL) {
           setCurrentUser(cloudProfile);
-          return { user: cloudProfile };
+          addSystemLog('success', 'AUTH', `Login Master Admin realizado: ${cleanEmail}`);
+          return { user: cloudProfile, mustReset: Boolean(cloudProfile.mustResetPassword) };
         }
 
         // Se o perfil existe no banco mas ainda não tem senha no Supabase Auth (ex: aluno recém cadastrado pelo personal)
         setCurrentUser(cloudProfile);
-        return { user: cloudProfile };
+        addSystemLog('info', 'AUTH', `Login por perfil realizado: ${cleanEmail}`);
+        return { user: cloudProfile, mustReset: Boolean(cloudProfile.mustResetPassword) };
       }
     } catch (e: any) {
       console.warn('Erro ao consultar Supabase no login:', e?.message);
+      addSystemLog('warn', 'AUTH', `Aviso ao consultar Supabase no login de ${cleanEmail}: ${e?.message}`);
     }
   }
 
@@ -144,16 +153,19 @@ export async function loginUser(email: string, password?: string): Promise<{ use
   const found = users.find((u) => u.email.toLowerCase() === cleanEmail);
   if (found) {
     if (found.status === 'inativo') {
+      addSystemLog('warn', 'AUTH', `Tentativa de login local em conta desativada: ${cleanEmail}`);
       return {
         user: null,
         error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
       };
     }
     setCurrentUser(found);
-    return { user: found };
+    addSystemLog('info', 'AUTH', `Login local realizado: ${cleanEmail}`);
+    return { user: found, mustReset: Boolean(found.mustResetPassword) };
   }
 
-  return { user: null, error: 'Usuário não encontrado. Verifique seu e-mail ou crie uma conta.' };
+  addSystemLog('warn', 'AUTH', `Falha de login - usuário não encontrado: ${cleanEmail}`);
+  return { user: null, error: 'Usuário não encontrado. Verifique seu e-mail ou solicite convite ao seu personal.' };
 }
 
 /**
@@ -255,39 +267,74 @@ export async function getStudentsForInstructor(instructorId: string, isMaster: b
 }
 
 /**
- * Personal convida um aluno por e-mail ou WhatsApp
+ * Personal convida um aluno por e-mail e WhatsApp
  */
 export async function inviteStudent(
   instructor: UserProfile,
   studentName: string,
   studentEmail: string,
   phone?: string
-): Promise<{ student: UserProfile; emailSent: boolean; error?: string }> {
+): Promise<{ student: UserProfile; emailSent: boolean; shareLink: string; whatsappUrl: string; error?: string }> {
   const cleanEmail = studentEmail.trim().toLowerCase();
   const supabase = getSupabaseClient();
+  let studentId = `aluno-${Date.now()}`;
+
+  // 1. Tentar criar o usuário no Supabase Auth caso ainda não exista
+  if (supabase) {
+    try {
+      const tempPassword = 'FitTrack@' + Math.floor(100000 + Math.random() * 900000);
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: tempPassword,
+        options: {
+          data: {
+            name: studentName.trim(),
+            role: 'aluno',
+            instructor_id: instructor.id,
+            instructor_name: instructor.name,
+          },
+        },
+      });
+
+      if (!signUpError && signUpData?.user) {
+        studentId = signUpData.user.id;
+        addSystemLog('info', 'CONVITE', `Usuário criado no Supabase Auth (${cleanEmail})`);
+      } else if (signUpError) {
+        // Pode ser "User already registered" - busca perfil existente
+        addSystemLog('info', 'CONVITE', `Nota no cadastro Supabase Auth (${cleanEmail}): ${signUpError.message}`);
+        const existing = await supabaseFetchProfile(cleanEmail);
+        if (existing) {
+          studentId = existing.id;
+        }
+      }
+    } catch (e: any) {
+      addSystemLog('warn', 'CONVITE', `Exceção no signUp do Supabase para ${cleanEmail}: ${e?.message}`);
+    }
+  }
 
   const newStudent: UserProfile = {
-    id: `aluno-${Date.now()}`,
+    id: studentId,
     name: studentName.trim(),
     email: cleanEmail,
     role: 'aluno',
     status: 'ativo',
+    mustResetPassword: true,
     instructorId: instructor.id,
     instructorName: instructor.name,
     phone: phone?.trim(),
     createdAt: new Date().toISOString(),
   };
 
-  // Salva no Supabase
+  // 2. Salva perfil no Supabase
   if (supabase) {
     await supabaseSaveProfile(newStudent);
   }
 
-  // Salva localmente
+  // 3. Salva localmente
   const users = getStoredUsers();
   saveStoredUsers([...users.filter((u) => u.email !== cleanEmail), newStudent]);
 
-  // Envia e-mail de recuperação/criação de senha no primeiro acesso
+  // 4. Dispara e-mail de definição de senha via Supabase
   let emailSent = false;
   let emailError: string | undefined;
 
@@ -299,15 +346,106 @@ export async function inviteStudent(
       });
       if (!error) {
         emailSent = true;
+        addSystemLog('success', 'CONVITE', `E-mail de boas-vindas disparado para ${cleanEmail}`);
       } else {
         emailError = error.message;
+        addSystemLog('warn', 'CONVITE', `Supabase não disparou e-mail para ${cleanEmail}: ${error.message}`, error);
       }
     } catch (e: any) {
       emailError = e?.message;
+      addSystemLog('error', 'CONVITE', `Erro ao chamar resetPasswordForEmail para ${cleanEmail}: ${e?.message}`);
     }
   }
 
-  return { student: newStudent, emailSent, error: emailError };
+  // 5. Prepara link direto de primeiro acesso e mensagem para WhatsApp
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const shareLink = `${origin}?firstAccess=true&email=${encodeURIComponent(cleanEmail)}`;
+  const cleanPhone = phone?.replace(/\D/g, '') || '';
+  const greetingMsg = encodeURIComponent(
+    `Olá ${studentName.trim()}! Seu personal ${instructor.name} cadastrou seu acesso no FitTrack PRO. Acesse o aplicativo e crie sua senha no link: ${shareLink}`
+  );
+  const whatsappUrl = cleanPhone
+    ? `https://wa.me/55${cleanPhone}?text=${greetingMsg}`
+    : `https://wa.me/?text=${greetingMsg}`;
+
+  addSystemLog('success', 'CONVITE', `Aluno convidado: ${studentName} (${cleanEmail})`, {
+    emailSent,
+    shareLink,
+  });
+
+  return { student: newStudent, emailSent, shareLink, whatsappUrl, error: emailError };
+}
+
+/**
+ * Personal ou Admin Master reseta a senha de um aluno de volta para a inicial
+ */
+export async function resetStudentPasswordByInstructor(
+  instructor: UserProfile,
+  student: UserProfile
+): Promise<{ success: boolean; emailSent: boolean; shareLink: string; whatsappUrl: string; error?: string }> {
+  const supabase = getSupabaseClient();
+  const cleanEmail = student.email.trim().toLowerCase();
+
+  // 1. Marca flag mustResetPassword
+  const updatedStudent: UserProfile = {
+    ...student,
+    mustResetPassword: true,
+  };
+
+  if (supabase) {
+    await supabaseSaveProfile(updatedStudent);
+  }
+
+  const users = getStoredUsers();
+  const index = users.findIndex((u) => u.id === student.id || u.email.toLowerCase() === cleanEmail);
+  if (index >= 0) {
+    users[index].mustResetPassword = true;
+    saveStoredUsers(users);
+  }
+
+  // 2. Dispara e-mail pelo Supabase
+  let emailSent = false;
+  let emailError: string | undefined;
+
+  if (supabase) {
+    try {
+      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+      if (!error) {
+        emailSent = true;
+        addSystemLog('success', 'SENHA', `E-mail de reset enviado para ${cleanEmail}`);
+      } else {
+        emailError = error.message;
+        addSystemLog('warn', 'SENHA', `Supabase não disparou e-mail de reset para ${cleanEmail}: ${error.message}`, error);
+      }
+    } catch (e: any) {
+      emailError = e?.message;
+      addSystemLog('error', 'SENHA', `Erro ao chamar resetPasswordForEmail para ${cleanEmail}: ${e?.message}`);
+    }
+  }
+
+  // 3. Link direto e WhatsApp
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const shareLink = `${origin}?resetPassword=true&email=${encodeURIComponent(cleanEmail)}`;
+  const cleanPhone = student.phone?.replace(/\D/g, '') || '';
+  const greetingMsg = encodeURIComponent(
+    `Olá ${student.name}! Seu personal ${instructor.name} resetou sua senha no FitTrack PRO. Clique no link para cadastrar sua nova senha: ${shareLink}`
+  );
+  const whatsappUrl = cleanPhone
+    ? `https://wa.me/55${cleanPhone}?text=${greetingMsg}`
+    : `https://wa.me/?text=${greetingMsg}`;
+
+  addSystemLog('info', 'SENHA', `Personal ${instructor.name} resetou a senha de ${student.name} (${cleanEmail})`);
+
+  return {
+    success: true,
+    emailSent,
+    shareLink,
+    whatsappUrl,
+    error: emailError,
+  };
 }
 
 /**
@@ -368,20 +506,45 @@ export async function sendPasswordResetEmail(email: string): Promise<{ success: 
 /**
  * Atualiza a senha do usuário autenticado após clicar no link de recuperação
  */
-export async function updateUserPassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+export async function updateUserPassword(newPassword: string, targetEmail?: string): Promise<{ success: boolean; error?: string }> {
   const supabase = getSupabaseClient();
+  const current = getCurrentUser();
+  const email = targetEmail || current?.email;
+
   if (supabase) {
     try {
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
       if (error) {
+        addSystemLog('error', 'SENHA', `Erro no updateUser do Supabase: ${error.message}`);
         return { success: false, error: error.message };
       }
-      return { success: true };
     } catch (err: any) {
+      addSystemLog('error', 'SENHA', `Exceção no updateUser do Supabase: ${err?.message}`);
       return { success: false, error: err?.message || 'Erro ao atualizar a senha.' };
     }
   }
+
+  // Desativa mustResetPassword localmente e no Supabase se o perfil existir
+  if (current) {
+    current.mustResetPassword = false;
+    setCurrentUser(current);
+    if (supabase) {
+      supabaseSaveProfile(current).catch(() => {});
+    }
+  } else if (email) {
+    const users = getStoredUsers();
+    const found = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (found) {
+      found.mustResetPassword = false;
+      saveStoredUsers(users);
+      if (supabase) {
+        supabaseSaveProfile(found).catch(() => {});
+      }
+    }
+  }
+
+  addSystemLog('success', 'SENHA', `Senha atualizada com sucesso para ${email || 'usuário atual'}`);
   return { success: true };
 }

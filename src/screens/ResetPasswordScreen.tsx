@@ -3,15 +3,23 @@ import { Lock, CheckCircle2, ArrowRight, AlertCircle, Dumbbell } from 'lucide-re
 import { updateUserPassword } from '../lib/auth';
 
 interface ResetPasswordScreenProps {
-  onPasswordResetDone: () => void;
+  onPasswordResetDone: (email?: string) => void;
+  targetEmail?: string;
 }
 
-export const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPasswordResetDone }) => {
+export const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({
+  onPasswordResetDone,
+  targetEmail,
+}) => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  const isFirstAccess = params?.get('firstAccess') === 'true';
+  const emailFromQuery = params?.get('email') || targetEmail;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,15 +36,15 @@ export const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPass
     }
 
     setLoading(true);
-    const res = await updateUserPassword(newPassword);
+    const res = await updateUserPassword(newPassword, emailFromQuery || undefined);
 
     if (res.success) {
       setSuccess(true);
       setTimeout(() => {
-        onPasswordResetDone();
+        onPasswordResetDone(emailFromQuery || undefined);
       }, 1500);
     } else {
-      setErrorMsg(res.error || 'Erro ao redefinir a senha.');
+      setErrorMsg(res.error || 'Erro ao definir a senha.');
     }
     setLoading(false);
   };
@@ -48,8 +56,14 @@ export const ResetPasswordScreen: React.FC<ResetPasswordScreenProps> = ({ onPass
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center shadow-xl shadow-indigo-500/20 mx-auto mb-3">
           <Dumbbell className="w-9 h-9 text-white" />
         </div>
-        <h1 className="text-2xl font-black tracking-tight text-white">Criar Nova Senha</h1>
-        <p className="text-xs text-zinc-400 mt-1">Digite sua nova senha de acesso</p>
+        <h1 className="text-2xl font-black tracking-tight text-white">
+          {isFirstAccess ? 'Criar Primeira Senha' : 'Criar Nova Senha'}
+        </h1>
+        <p className="text-xs text-zinc-400 mt-1">
+          {isFirstAccess
+            ? `Bem-vindo! Cadastre sua senha de acesso${emailFromQuery ? ` para ${emailFromQuery}` : ''}`
+            : `Digite sua nova senha de acesso${emailFromQuery ? ` para ${emailFromQuery}` : ''}`}
+        </p>
       </div>
 
       <div className="bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl backdrop-blur-xl">

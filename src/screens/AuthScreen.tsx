@@ -16,7 +16,7 @@ import { loginUser, registerUser, sendPasswordResetEmail } from '../lib/auth';
 import type { UserProfile, UserRole } from '../types';
 
 interface AuthScreenProps {
-  onLoginSuccess: (user: UserProfile) => void;
+  onLoginSuccess: (user: UserProfile, mustResetPassword?: boolean) => void;
 }
 
 type AuthMode = 'login' | 'register' | 'forgot';
@@ -74,7 +74,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       } else {
         const res = await loginUser(email, password);
         if (res.user) {
-          onLoginSuccess(res.user);
+          onLoginSuccess(res.user, res.mustReset);
         } else {
           setErrorMsg(res.error || 'Credenciais inválidas.');
         }

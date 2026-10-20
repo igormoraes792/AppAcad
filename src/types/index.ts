@@ -9,6 +9,7 @@ export interface UserProfile {
   role: UserRole;
   status?: UserStatus;
   isAdmin?: boolean;
+  mustResetPassword?: boolean;
   instructorId?: string;
   instructorName?: string;
   phone?: string;

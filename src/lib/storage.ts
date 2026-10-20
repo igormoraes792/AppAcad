@@ -1,5 +1,6 @@
 import type { WeightEntry, WorkoutLog, WorkoutPlan, WorkoutPlanTemplate } from '../types';
 import { getSupabaseClient } from './supabase';
+import { addSystemLog } from './logger';
 
 const KEYS = {
   PLANS: 'fittrack_workout_plans',
@@ -253,21 +254,25 @@ export function deleteWeightForStudent(weightId: string) {
 // SINCRONIZAÇÃO EM NUVEM VIA SUPABASE
 // ==========================================
 
-export async function syncPlansForStudent(studentId: string): Promise<WorkoutPlan[]> {
+export async function syncPlansForStudent(studentId: string, studentEmail?: string): Promise<WorkoutPlan[]> {
   const supabase = getSupabaseClient();
   const local = getPlansForStudent(studentId);
   if (!supabase) return local;
 
   try {
-    const { data, error } = await supabase
-      .from('workout_plans')
-      .select('*')
-      .eq('student_id', studentId);
+    let query = supabase.from('workout_plans').select('*');
+    if (studentEmail && studentEmail.toLowerCase().trim() !== studentId.toLowerCase().trim()) {
+      query = query.or(`student_id.eq.${studentId},student_id.eq.${studentEmail.toLowerCase().trim()}`);
+    } else {
+      query = query.eq('student_id', studentId);
+    }
+
+    const { data, error } = await query;
 
     if (!error && data && data.length > 0) {
       const parsed: WorkoutPlan[] = data.map((row: any) => ({
         id: row.id,
-        studentId: row.student_id,
+        studentId: studentId,
         createdBy: row.created_by,
         name: row.name,
         category: row.category,
@@ -277,8 +282,9 @@ export async function syncPlansForStudent(studentId: string): Promise<WorkoutPla
       }));
 
       // Atualiza localmente
-      const all = getAllStoredPlans().filter((p) => p.studentId !== studentId);
+      const all = getAllStoredPlans().filter((p) => p.studentId !== studentId && p.studentId !== studentEmail);
       saveAllStoredPlans([...all, ...parsed]);
+      addSystemLog('success', 'SINCRONIA', `Sincronizados ${parsed.length} treino(s) do aluno ${studentId}`);
       return parsed;
     } else if (local.length > 0) {
       // Sobe dados locais para o Supabase
@@ -294,8 +300,9 @@ export async function syncPlansForStudent(studentId: string): Promise<WorkoutPla
         });
       }
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error('Falha na sincronização de treinos no Supabase:', err);
+    addSystemLog('error', 'SINCRONIA', `Erro ao sincronizar treinos: ${err?.message}`);
   }
   return local;
 }
@@ -509,6 +516,20 @@ export function getAllPlanTemplates(): WorkoutPlanTemplate[] {
 
 export function saveAllPlanTemplates(templates: WorkoutPlanTemplate[]) {
   localStorage.setItem(KEYS.TEMPLATES, JSON.stringify(templates));
+}
+
+export function saveOrUpdatePlanTemplate(template: WorkoutPlanTemplate): WorkoutPlanTemplate {
+  const templates = getAllPlanTemplates();
+  const index = templates.findIndex((t) => t.id === template.id);
+  if (index >= 0) {
+    templates[index] = template;
+  } else {
+    templates.push(template);
+  }
+  saveAllPlanTemplates(templates);
+  uploadTemplateToCloud(template);
+  addSystemLog('success', 'TREINO', `Modelo de treino salvo/atualizado: ${template.name}`);
+  return template;
 }
 
 export function savePlanAsTemplate(plan: WorkoutPlan, instructorId: string, customName?: string): WorkoutPlanTemplate {

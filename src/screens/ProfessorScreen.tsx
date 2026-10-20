@@ -17,12 +17,14 @@ import {
   Check,
   Ban,
   UserCheck,
-  AlertCircle,
   Phone,
   ShieldCheck,
   CheckCircle2,
   BookmarkPlus,
   Layers,
+  FileText,
+  KeyRound,
+  Pencil,
 } from 'lucide-react';
 import type {
   UserProfile,
@@ -37,6 +39,7 @@ import { isUserAdmin } from '../types';
 import {
   getStudentsForInstructor,
   inviteStudent,
+  resetStudentPasswordByInstructor,
   setStudentActiveStatus,
   logoutUser,
 } from '../lib/auth';
@@ -50,6 +53,7 @@ import {
   deletePlanFromCloud,
   savePlanAsTemplate,
   deletePlanTemplate,
+  saveOrUpdatePlanTemplate,
   applyTemplateToStudent,
   syncTemplatesWithCloud,
 } from '../lib/storage';
@@ -58,12 +62,15 @@ import {
   MUSCLE_GROUPS,
   type PresetExercise,
 } from '../constants/presetExercises';
+import { SystemLogsModal } from '../components/SystemLogsModal';
 
 interface ProfessorScreenProps {
   currentUser: UserProfile;
   onLogout: () => void;
   onOpenSettings: () => void;
   onSimulateStudent: (student: UserProfile) => void;
+  onEnterAthleteMode?: () => void;
+  onOpenChangePassword?: () => void;
 }
 
 export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
@@ -71,6 +78,8 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   onLogout,
   onOpenSettings,
   onSimulateStudent,
+  onEnterAthleteMode,
+  onOpenChangePassword,
 }) => {
   const isMaster = isUserAdmin(currentUser);
 
@@ -87,6 +96,30 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const [templateNameInput, setTemplateNameInput] = useState('');
   const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
   const [templateFeedback, setTemplateFeedback] = useState<string | null>(null);
+
+  // Editor de Modelos de Treino (Criar / Editar)
+  const [editingTemplate, setEditingTemplate] = useState<WorkoutPlanTemplate | null>(null);
+  const [editTplCategory, setEditTplCategory] = useState('Treino A');
+  const [editTplName, setEditTplName] = useState('');
+  const [editTplDesc, setEditTplDesc] = useState('');
+  const [editTplExercises, setEditTplExercises] = useState<ExerciseTemplate[]>([]);
+  const [showAddExToTemplate, setShowAddExToTemplate] = useState(false);
+  const [tplExSearch, setTplExSearch] = useState('');
+  const [tplExMuscle, setTplExMuscle] = useState<string>('Todos');
+
+  // Logs do Sistema
+  const [showLogsModal, setShowLogsModal] = useState(false);
+
+  // Reset de Senha de Aluno por Personal/Master
+  const [resetPasswordStudent, setResetPasswordStudent] = useState<UserProfile | null>(null);
+  const [resetPasswordResult, setResetPasswordResult] = useState<{
+    whatsappUrl: string;
+    shareLink: string;
+    emailSent: boolean;
+    error?: string;
+  } | null>(null);
+  const [isResettingStudentPass, setIsResettingStudentPass] = useState(false);
+  const [copiedResetLink, setCopiedResetLink] = useState(false);
 
   // Dados do aluno selecionado
   const [studentPlans, setStudentPlans] = useState<WorkoutPlan[]>([]);
@@ -177,20 +210,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         invitePhone.trim()
       );
 
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const cleanPhone = invitePhone.replace(/\D/g, '');
-      const greetingMsg = encodeURIComponent(
-        `Olá ${inviteName.trim()}! Seu personal ${currentUser.name} convidou você para o FitTrack PRO. Acesse o aplicativo e crie sua senha de primeiro acesso no link: ${origin}`
-      );
-      const whatsappUrl = cleanPhone
-        ? `https://wa.me/55${cleanPhone}?text=${greetingMsg}`
-        : `https://wa.me/?text=${greetingMsg}`;
-
       setInviteResult({
         student: res.student,
         emailSent: res.emailSent,
-        whatsappUrl,
-        shareLink: origin,
+        whatsappUrl: res.whatsappUrl,
+        shareLink: res.shareLink,
         error: res.error,
       });
 
@@ -199,6 +223,29 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
       alert('Erro ao convidar aluno: ' + (err?.message || 'Tente novamente'));
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  // Reset de senha do aluno pelo Personal ou Admin Master
+  const handleResetStudentPassword = async (student: UserProfile) => {
+    const confirmMsg = `Deseja realmente resetar a senha de ${student.name}? No próximo acesso ao app, o aluno será solicitado a escolher uma nova senha.`;
+    if (!confirm(confirmMsg)) return;
+
+    setIsResettingStudentPass(true);
+    try {
+      const res = await resetStudentPasswordByInstructor(currentUser, student);
+      setResetPasswordResult({
+        whatsappUrl: res.whatsappUrl,
+        shareLink: res.shareLink,
+        emailSent: res.emailSent,
+        error: res.error,
+      });
+      setResetPasswordStudent(student);
+      await loadStudents();
+    } catch (err: any) {
+      alert('Erro ao resetar senha: ' + (err?.message || 'Erro desconhecido'));
+    } finally {
+      setIsResettingStudentPass(false);
     }
   };
 
@@ -378,6 +425,81 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     }
   };
 
+  // Abre criação de novo modelo do zero
+  const handleOpenCreateNewTemplate = () => {
+    setEditingTemplate({
+      id: `template-${Date.now()}`,
+      createdBy: currentUser.id,
+      category: 'Treino A',
+      name: '',
+      description: '',
+      exercises: [],
+      createdAt: new Date().toISOString(),
+    });
+    setEditTplCategory('Treino A');
+    setEditTplName('');
+    setEditTplDesc('');
+    setEditTplExercises([]);
+  };
+
+  // Abre edição de um modelo existente
+  const handleOpenEditTemplate = (tpl: WorkoutPlanTemplate) => {
+    setEditingTemplate(tpl);
+    setEditTplCategory(tpl.category);
+    setEditTplName(tpl.name);
+    setEditTplDesc(tpl.description || '');
+    setEditTplExercises([...tpl.exercises]);
+  };
+
+  // Salva modelo criado ou editado
+  const handleSaveEditedTemplate = () => {
+    if (!editingTemplate || !editTplName.trim()) return;
+
+    const updated: WorkoutPlanTemplate = {
+      ...editingTemplate,
+      category: editTplCategory.trim() || 'Treino',
+      name: editTplName.trim(),
+      description: editTplDesc.trim(),
+      exercises: editTplExercises,
+      createdBy: currentUser.id, // assegura posse do personal
+    };
+
+    saveOrUpdatePlanTemplate(updated);
+    setTemplates((prev) => {
+      const idx = prev.findIndex((t) => t.id === updated.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = updated;
+        return copy;
+      }
+      return [...prev, updated];
+    });
+
+    setEditingTemplate(null);
+    setTemplateFeedback(`Modelo "${updated.name}" salvo com sucesso!`);
+    setTimeout(() => setTemplateFeedback(null), 3500);
+  };
+
+  // Adiciona exercício ao modelo sendo editado
+  const handleAddPresetToTemplate = (preset: PresetExercise) => {
+    const newEx: ExerciseTemplate = {
+      id: `tpl-ex-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: preset.name,
+      muscleGroup: preset.muscleGroup,
+      targetSets: preset.defaultSets,
+      targetReps: preset.defaultReps,
+      restSeconds: preset.defaultRestSeconds,
+      lastWeightKg: preset.defaultWeightKg,
+      notes: preset.notes,
+    };
+    setEditTplExercises((prev) => [...prev, newEx]);
+    setShowAddExToTemplate(false);
+  };
+
+  const handleRemoveExerciseFromTemplate = (exId: string) => {
+    setEditTplExercises((prev) => prev.filter((e) => e.id !== exId));
+  };
+
   const activeCount = students.filter((s) => (s.status || 'ativo') === 'ativo').length;
   const inactiveCount = students.filter((s) => s.status === 'inativo').length;
 
@@ -398,6 +520,14 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
       ex.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
       ex.muscleGroup.toLowerCase().includes(presetSearch.toLowerCase()) ||
       (ex.notes && ex.notes.toLowerCase().includes(presetSearch.toLowerCase()));
+    return matchesGroup && matchesSearch;
+  });
+
+  const filteredTplPresets = PRESET_EXERCISES.filter((ex) => {
+    const matchesGroup = tplExMuscle === 'Todos' || ex.muscleGroup === tplExMuscle;
+    const matchesSearch =
+      ex.name.toLowerCase().includes(tplExSearch.toLowerCase()) ||
+      ex.muscleGroup.toLowerCase().includes(tplExSearch.toLowerCase());
     return matchesGroup && matchesSearch;
   });
 
@@ -436,14 +566,48 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
           </div>
 
           <div className="flex items-center space-x-1.5">
-            {/* O botão do Banco Supabase é exclusivo do Admin Master (igormoraes792@gmail.com) */}
+            {/* Botão de Modo Atleta para a Conta Master treinar como aluno */}
+            {isMaster && onEnterAthleteMode && (
+              <button
+                onClick={onEnterAthleteMode}
+                className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 hover:text-white transition flex items-center gap-1.5 font-bold text-xs shadow-sm active:scale-95"
+                title="Meu Treino Pessoal (Modo Atleta)"
+              >
+                <Dumbbell className="w-4 h-4 text-amber-400" />
+                <span className="hidden sm:inline">Meu Treino</span>
+              </button>
+            )}
+
+            {/* Logs do Sistema (Exclusivo Master Admin) */}
+            {isMaster && (
+              <button
+                onClick={() => setShowLogsModal(true)}
+                className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-amber-400 transition"
+                title="Histórico de Logs do Sistema"
+              >
+                <FileText className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Botão do Banco Supabase (Exclusivo Master Admin) */}
             {isMaster && (
               <button
                 onClick={onOpenSettings}
                 className="p-2 rounded-xl bg-amber-950/30 border border-amber-500/40 text-amber-400 hover:text-white transition"
-                title="Configurações do Banco Supabase (Exclusivo Master Admin)"
+                title="Configurações do Banco Supabase"
               >
                 <Database className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Alterar Própria Senha */}
+            {onOpenChangePassword && (
+              <button
+                onClick={onOpenChangePassword}
+                className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition"
+                title="Alterar Minha Senha"
+              >
+                <KeyRound className="w-4 h-4" />
               </button>
             )}
 
@@ -495,7 +659,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               </button>
             </div>
 
-            {/* Cartão do Aluno com Status de Ativação */}
+            {/* Cartão do Aluno com Status de Ativação e Reset de Senha */}
             <div className="bg-gradient-to-br from-zinc-900 to-zinc-900/90 border border-zinc-800 rounded-3xl p-4 shadow-lg space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
@@ -514,6 +678,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                           ATIVO
                         </span>
                       )}
+                      {selectedStudent.mustResetPassword && (
+                        <span className="text-[9px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
+                          RESET PENDENTE
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-zinc-400">{selectedStudent.email}</p>
                     {selectedStudent.phone && (
@@ -526,38 +695,36 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 </div>
               </div>
 
-              {/* Botão de Desativar ou Reativar Conta */}
-              <div className="pt-2 border-t border-zinc-800/80">
+              {/* Botões de Ação da Conta (Desativar/Reativar e Resetar Senha) */}
+              <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  onClick={() => handleResetStudentPassword(selectedStudent)}
+                  disabled={isResettingStudentPass}
+                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-amber-950/40 border border-zinc-700/80 hover:border-amber-500/40 text-zinc-300 hover:text-amber-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                  title="Resetar a senha deste aluno para que ele crie uma nova"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isResettingStudentPass ? 'Resetando...' : 'Resetar Senha'}</span>
+                </button>
+
                 {selectedStudent.status === 'inativo' ? (
-                  <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-3 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-rose-300">Conta Desativada</p>
-                        <p className="text-[10px] text-zinc-400">O aluno não consegue fazer login.</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleToggleStudentStatus}
-                      disabled={isUpdatingStatus}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-md transition disabled:opacity-50"
-                    >
-                      <UserCheck className="w-3.5 h-3.5" />
-                      <span>{isUpdatingStatus ? 'Reativando...' : 'Reativar'}</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleToggleStudentStatus}
+                    disabled={isUpdatingStatus}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-md transition disabled:opacity-50"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>{isUpdatingStatus ? 'Reativando...' : 'Reativar Conta'}</span>
+                  </button>
                 ) : (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-zinc-400">Acesso do aluno liberado</span>
-                    <button
-                      onClick={handleToggleStudentStatus}
-                      disabled={isUpdatingStatus}
-                      className="px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-rose-900/30 border border-zinc-700/60 hover:border-rose-500/40 text-zinc-400 hover:text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
-                    >
-                      <Ban className="w-3.5 h-3.5" />
-                      <span>{isUpdatingStatus ? 'Atualizando...' : 'Desativar Aluno'}</span>
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleToggleStudentStatus}
+                    disabled={isUpdatingStatus}
+                    className="px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-rose-900/30 border border-zinc-700/60 hover:border-rose-500/40 text-zinc-400 hover:text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>{isUpdatingStatus ? 'Atualizando...' : 'Desativar Aluno'}</span>
+                  </button>
                 )}
               </div>
 
@@ -776,7 +943,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                   title="Ver e gerenciar fichas modelos salvas"
                 >
                   <Layers className="w-4 h-4 text-indigo-400" />
-                  <span>Modelos Salvos ({templates.length})</span>
+                  <span>Modelos de Treino ({templates.length})</span>
                 </button>
 
                 <button
@@ -885,6 +1052,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                                 Ativo
                               </span>
                             )}
+                            {student.mustResetPassword && (
+                              <span className="text-[9px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
+                                Reset
+                              </span>
+                            )}
                           </div>
                           <p className="text-[10px] text-zinc-400">{student.email}</p>
                           <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-500">
@@ -910,6 +1082,87 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
           </div>
         )}
       </main>
+
+      {/* ======================================================== */}
+      {/* MODAL: RESET DE SENHA DE ALUNO PELO PERSONAL / MASTER */}
+      {/* ======================================================== */}
+      {resetPasswordStudent && resetPasswordResult && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-6 pb-safe shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Senha do Aluno Resetada</h3>
+              </div>
+              <button
+                onClick={() => {
+                  setResetPasswordStudent(null);
+                  setResetPasswordResult(null);
+                }}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-center pt-2">
+              <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold text-white">
+                  Acesso de {resetPasswordStudent.name} resetado com sucesso!
+                </h4>
+                <p className="text-xs text-zinc-400 mt-1">
+                  No próximo acesso ao aplicativo, o aluno precisará cadastrar uma nova senha.
+                  {resetPasswordResult.emailSent && (
+                    <span className="block text-emerald-400 mt-1 font-semibold">
+                      ✓ E-mail com link de redefinição enviado para {resetPasswordStudent.email}
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                {/* Botão de WhatsApp */}
+                <a
+                  href={resetPasswordResult.whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition active:scale-98"
+                >
+                  <Share2 className="w-4 h-4" />
+                  <span>Enviar Link pelo WhatsApp</span>
+                </a>
+
+                {/* Botão Copiar Link */}
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(resetPasswordResult.shareLink);
+                    setCopiedResetLink(true);
+                    setTimeout(() => setCopiedResetLink(false), 2000);
+                  }}
+                  className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition"
+                >
+                  {copiedResetLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedResetLink ? 'Link Copiado!' : 'Copiar Link de Acesso'}</span>
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  setResetPasswordStudent(null);
+                  setResetPasswordResult(null);
+                }}
+                className="w-full py-2 text-center text-xs font-semibold text-zinc-400 hover:text-white transition"
+              >
+                Concluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* MODAL: ADICIONAR EXERCÍCIO (BIBLIOTECA PRÉ-MAPEADA / MANUAL) */}
@@ -1188,7 +1441,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                       : 'Modelos de Fichas de Treino'}
                   </h3>
                   <p className="text-[11px] text-zinc-400">
-                    Fichas prontas que você pode replicar para qualquer aluno com 1 clique
+                    Crie, edite e replique fichas prontas para qualquer aluno
                   </p>
                 </div>
               </div>
@@ -1203,6 +1456,17 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               </button>
             </div>
 
+            {/* Botão de Criar Novo Modelo */}
+            <div className="pt-3 pb-1 flex-shrink-0">
+              <button
+                onClick={handleOpenCreateNewTemplate}
+                className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-98 transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Criar Novo Modelo de Treino</span>
+              </button>
+            </div>
+
             {/* Lista de Modelos Salvos */}
             <div className="flex-1 overflow-y-auto space-y-3 py-3 pr-1 min-h-[260px]">
               {templates.length === 0 ? (
@@ -1210,99 +1474,327 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                   Nenhum modelo cadastrado ainda.
                 </div>
               ) : (
-                templates.map((tpl) => (
-                  <div
-                    key={tpl.id}
-                    className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3.5 space-y-2.5 shadow-sm hover:border-indigo-500/40 transition"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
-                          {tpl.category}
-                        </span>
-                        <h4 className="text-sm font-bold text-white">{tpl.name}</h4>
-                        {tpl.description && (
-                          <p className="text-[11px] text-zinc-400 mt-0.5">{tpl.description}</p>
-                        )}
+                templates.map((tpl) => {
+                  const isPersonalTemplate = tpl.createdBy === currentUser.id || tpl.createdBy !== 'global';
+
+                  return (
+                    <div
+                      key={tpl.id}
+                      className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3.5 space-y-2.5 shadow-sm hover:border-indigo-500/40 transition"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
+                              {tpl.category}
+                            </span>
+                            {isPersonalTemplate && (
+                              <span className="text-[9px] font-bold bg-purple-500/20 text-purple-300 px-1.5 py-0.2 rounded border border-purple-500/30">
+                                MEU MODELO
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-sm font-bold text-white">{tpl.name}</h4>
+                          {tpl.description && (
+                            <p className="text-[11px] text-zinc-400 mt-0.5">{tpl.description}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          {/* Botão de Editar Modelo */}
+                          <button
+                            onClick={() => handleOpenEditTemplate(tpl)}
+                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition"
+                            title="Editar este modelo (nome, exercícios)"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Botão de Excluir Modelo */}
+                          {isPersonalTemplate && (
+                            <button
+                              onClick={() => handleDeleteTemplate(tpl.id)}
+                              className="p-1.5 rounded-lg bg-zinc-800 hover:bg-rose-900/40 text-zinc-400 hover:text-rose-400 transition"
+                              title="Excluir este modelo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      {tpl.createdBy !== 'global' && (
+                      {/* Preview dos Exercícios */}
+                      <div className="bg-zinc-900/90 rounded-xl p-2.5">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 mb-1.5">
+                          <span>Exercícios ({tpl.exercises.length}):</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {tpl.exercises.slice(0, 5).map((ex, i) => (
+                            <span
+                              key={i}
+                              className="text-[10px] bg-zinc-800/80 text-zinc-300 px-2 py-0.5 rounded-lg border border-zinc-700/60"
+                            >
+                              {ex.name}
+                            </span>
+                          ))}
+                          {tpl.exercises.length > 5 && (
+                            <span className="text-[10px] text-zinc-500 self-center">
+                              +{tpl.exercises.length - 5} outros
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Botão de Ação: Aplicar no Aluno */}
+                      {targetStudentForTemplate ? (
                         <button
-                          onClick={() => handleDeleteTemplate(tpl.id)}
+                          onClick={() => handleApplyTemplate(tpl, targetStudentForTemplate)}
+                          disabled={isApplyingTemplate}
+                          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-98 transition disabled:opacity-50"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>
+                            {isApplyingTemplate ? 'Aplicando Treino...' : `Aplicar em ${targetStudentForTemplate.name}`}
+                          </span>
+                        </button>
+                      ) : (
+                        /* Se aberto do painel geral, permite selecionar o aluno */
+                        <div className="pt-1">
+                          <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                            Replicar esta ficha para um aluno:
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              defaultValue=""
+                              onChange={(e) => {
+                                const st = students.find((s) => s.id === e.target.value);
+                                if (st) handleApplyTemplate(tpl, st);
+                              }}
+                              className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                            >
+                              <option value="" disabled>
+                                Escolha o aluno para receber este treino...
+                              </option>
+                              {students
+                                .filter((s) => (s.status || 'ativo') === 'ativo')
+                                .map((st) => (
+                                  <option key={st.id} value={st.id}>
+                                    {st.name} ({st.email})
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: EDITOR DE MODELO DE TREINO (CRIAR OU EDITAR) */}
+      {/* ======================================================== */}
+      {editingTemplate && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-5 pb-safe shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white">
+                  {editingTemplate.name ? `Editar: ${editingTemplate.name}` : 'Criar Novo Modelo de Treino'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingTemplate(null)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3.5 py-3 flex-1 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Divisão / Categoria</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Treino A, Treino B..."
+                    value={editTplCategory}
+                    onChange={(e) => setEditTplCategory(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome do Modelo</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Peito & Tríceps Hipertrofia"
+                    value={editTplName}
+                    onChange={(e) => setEditTplName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">Descrição / Foco</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Foco em sobrecarga progressiva e cadência"
+                  value={editTplDesc}
+                  onChange={(e) => setEditTplDesc(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Lista de Exercícios do Modelo */}
+              <div className="space-y-2 pt-2 border-t border-zinc-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white">
+                    Exercícios Incluídos ({editTplExercises.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddExToTemplate(true);
+                      setTplExSearch('');
+                      setTplExMuscle('Todos');
+                    }}
+                    className="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs font-bold rounded-lg flex items-center gap-1 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar Exercício</span>
+                  </button>
+                </div>
+
+                {editTplExercises.length === 0 ? (
+                  <div className="p-4 text-center rounded-xl bg-zinc-950/70 border border-dashed border-zinc-800 text-zinc-500 text-xs">
+                    Nenhum exercício adicionado a este modelo ainda.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {editTplExercises.map((ex) => (
+                      <div
+                        key={ex.id}
+                        className="bg-zinc-950/90 border border-zinc-800 rounded-xl p-2.5 flex items-center justify-between text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white">{ex.name}</span>
+                            <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded">
+                              {ex.muscleGroup}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">
+                            {ex.targetSets} séries • {ex.targetReps} reps • {ex.restSeconds}s
+                            {ex.lastWeightKg ? ` • ${ex.lastWeightKg} kg` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveExerciseFromTemplate(ex.id)}
                           className="p-1 text-zinc-600 hover:text-red-400 transition"
-                          title="Excluir este modelo"
+                          title="Remover"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                    </div>
-
-                    {/* Preview dos Exercícios */}
-                    <div className="bg-zinc-900/90 rounded-xl p-2.5">
-                      <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 mb-1.5">
-                        <span>Exercícios ({tpl.exercises.length}):</span>
                       </div>
-                      <div className="flex flex-wrap gap-1">
-                        {tpl.exercises.slice(0, 5).map((ex, i) => (
-                          <span
-                            key={i}
-                            className="text-[10px] bg-zinc-800/80 text-zinc-300 px-2 py-0.5 rounded-lg border border-zinc-700/60"
-                          >
-                            {ex.name}
-                          </span>
-                        ))}
-                        {tpl.exercises.length > 5 && (
-                          <span className="text-[10px] text-zinc-500 self-center">
-                            +{tpl.exercises.length - 5} outros
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Botão de Ação: Aplicar no Aluno */}
-                    {targetStudentForTemplate ? (
-                      <button
-                        onClick={() => handleApplyTemplate(tpl, targetStudentForTemplate)}
-                        disabled={isApplyingTemplate}
-                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-98 transition disabled:opacity-50"
-                      >
-                        <Layers className="w-3.5 h-3.5" />
-                        <span>
-                          {isApplyingTemplate ? 'Aplicando Treino...' : `Aplicar em ${targetStudentForTemplate.name}`}
-                        </span>
-                      </button>
-                    ) : (
-                      /* Se aberto do painel geral, permite selecionar o aluno */
-                      <div className="pt-1">
-                        <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
-                          Replicar esta ficha para um aluno:
-                        </label>
-                        <div className="flex items-center gap-1.5">
-                          <select
-                            defaultValue=""
-                            onChange={(e) => {
-                              const st = students.find((s) => s.id === e.target.value);
-                              if (st) handleApplyTemplate(tpl, st);
-                            }}
-                            className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
-                          >
-                            <option value="" disabled>
-                              Escolha o aluno para receber este treino...
-                            </option>
-                            {students
-                              .filter((s) => (s.status || 'ativo') === 'ativo')
-                              .map((st) => (
-                                <option key={st.id} value={st.id}>
-                                  {st.name} ({st.email})
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-                      </div>
-                    )}
+                    ))}
                   </div>
-                ))
-              )}
+                )}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-zinc-800 flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setEditingTemplate(null)}
+                className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold rounded-xl text-xs transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEditedTemplate}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-indigo-600/30 transition active:scale-98"
+              >
+                Salvar Modelo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-MODAL: ESCOLHER EXERCÍCIO PARA O MODELO */}
+      {showAddExToTemplate && (
+        <div className="fixed inset-0 z-55 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 flex-shrink-0">
+              <h4 className="text-sm font-bold text-white">Escolher Exercício para o Modelo</h4>
+              <button
+                onClick={() => setShowAddExToTemplate(false)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="py-2.5 space-y-2 flex-shrink-0">
+              <input
+                type="text"
+                placeholder="Buscar por nome..."
+                value={tplExSearch}
+                onChange={(e) => setTplExSearch(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 outline-none focus:border-purple-500"
+              />
+
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                <button
+                  onClick={() => setTplExMuscle('Todos')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition ${
+                    tplExMuscle === 'Todos' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400'
+                  }`}
+                >
+                  Todos
+                </button>
+                {MUSCLE_GROUPS.map((g) => (
+                  <button
+                    key={g}
+                    onClick={() => setTplExMuscle(g)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition ${
+                      tplExMuscle === g ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400'
+                    }`}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 min-h-[220px]">
+              {filteredTplPresets.map((preset) => (
+                <div
+                  key={preset.id}
+                  onClick={() => handleAddPresetToTemplate(preset)}
+                  className="bg-zinc-950 border border-zinc-800/80 hover:border-purple-500/50 rounded-xl p-2.5 flex items-center justify-between cursor-pointer transition active:scale-99"
+                >
+                  <div>
+                    <h5 className="text-xs font-bold text-white">{preset.name}</h5>
+                    <p className="text-[10px] text-zinc-400">
+                      {preset.muscleGroup} • {preset.defaultSets}x{preset.defaultReps} • {preset.defaultRestSeconds}s
+                    </p>
+                  </div>
+                  <button className="px-2 py-1 rounded-lg bg-purple-600/20 text-purple-300 text-[10px] font-bold">
+                    + Adicionar
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1398,19 +1890,20 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 </div>
 
                 <div>
-                  <h4 className="text-base font-bold text-white">Aluno Convidado com Sucesso!</h4>
+                  <h4 className="text-base font-bold text-white">Aluno Cadastrado com Sucesso!</h4>
                   <p className="text-xs text-zinc-400 mt-1">
                     {inviteResult.emailSent ? (
                       <>
-                        Um e-mail foi enviado para <span className="text-white font-semibold">{inviteResult.student.email}</span>{' '}
-                        para que o aluno crie sua primeira senha.
+                        Um e-mail foi disparado para <span className="text-white font-semibold">{inviteResult.student.email}</span>.
                       </>
                     ) : (
                       <>
-                        O perfil de <span className="text-white font-semibold">{inviteResult.student.name}</span> foi criado.{' '}
-                        Envie o link abaixo para que ele defina sua senha no primeiro acesso.
+                        O acesso de <span className="text-white font-semibold">{inviteResult.student.name}</span> está pronto!
                       </>
                     )}
+                    <span className="block mt-1 text-zinc-300">
+                      Envie o link direto de primeiro acesso pelo WhatsApp abaixo para que o aluno defina sua senha instantaneamente:
+                    </span>
                   </p>
                 </div>
 
@@ -1568,6 +2061,12 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal de Logs do Sistema (Exclusivo Master Admin) */}
+      <SystemLogsModal
+        isOpen={showLogsModal}
+        onClose={() => setShowLogsModal(false)}
+      />
     </div>
   );
 };

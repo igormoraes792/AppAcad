@@ -699,3 +699,4 @@ export const PRESET_EXERCISES: PresetExercise[] = [
     notes: 'Intensidade máxima no sprint, recuperação no intervalo leve',
   },
 ];
+
