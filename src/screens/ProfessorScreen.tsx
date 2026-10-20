@@ -21,10 +21,13 @@ import {
   Phone,
   ShieldCheck,
   CheckCircle2,
+  BookmarkPlus,
+  Layers,
 } from 'lucide-react';
 import type {
   UserProfile,
   WorkoutPlan,
+  WorkoutPlanTemplate,
   ExerciseTemplate,
   WorkoutLog,
   WeightEntry,
@@ -45,7 +48,16 @@ import {
   getWeightsForStudent,
   uploadPlanToCloud,
   deletePlanFromCloud,
+  savePlanAsTemplate,
+  deletePlanTemplate,
+  applyTemplateToStudent,
+  syncTemplatesWithCloud,
 } from '../lib/storage';
+import {
+  PRESET_EXERCISES,
+  MUSCLE_GROUPS,
+  type PresetExercise,
+} from '../constants/presetExercises';
 
 interface ProfessorScreenProps {
   currentUser: UserProfile;
@@ -67,6 +79,15 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const [statusFilter, setStatusFilter] = useState<'todos' | 'ativos' | 'inativos'>('todos');
   const [selectedStudent, setSelectedStudent] = useState<UserProfile | null>(null);
 
+  // Modelos de Treino (Templates Reutilizáveis)
+  const [templates, setTemplates] = useState<WorkoutPlanTemplate[]>([]);
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [targetStudentForTemplate, setTargetStudentForTemplate] = useState<UserProfile | null>(null);
+  const [saveAsTemplatePlan, setSaveAsTemplatePlan] = useState<WorkoutPlan | null>(null);
+  const [templateNameInput, setTemplateNameInput] = useState('');
+  const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
+  const [templateFeedback, setTemplateFeedback] = useState<string | null>(null);
+
   // Dados do aluno selecionado
   const [studentPlans, setStudentPlans] = useState<WorkoutPlan[]>([]);
   const [studentLogs, setStudentLogs] = useState<WorkoutLog[]>([]);
@@ -76,6 +97,12 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
   const [showNewExerciseModal, setShowNewExerciseModal] = useState<string | null>(null);
+
+  // Modal de Exercício: Biblioteca Pré-Mapeada vs Manual
+  const [exerciseModalTab, setExerciseModalTab] = useState<'preset' | 'manual'>('preset');
+  const [presetSearch, setPresetSearch] = useState('');
+  const [presetMuscleFilter, setPresetMuscleFilter] = useState<string>('Todos');
+  const [recentlyAddedExId, setRecentlyAddedExId] = useState<string | null>(null);
 
   // Formulário de Convite de Aluno
   const [inviteName, setInviteName] = useState('');
@@ -94,7 +121,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   // Status de ativação/desativação
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
-  // Formulários de Treino e Exercício
+  // Formulários de Treino e Exercício Manual
   const [newPlanCategory, setNewPlanCategory] = useState('Treino A');
   const [newPlanName, setNewPlanName] = useState('');
   const [newPlanDesc, setNewPlanDesc] = useState('');
@@ -109,15 +136,20 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const loadStudents = async () => {
     const list = await getStudentsForInstructor(currentUser.id, isMaster);
     setStudents(list);
-    // Se há um aluno em foco, atualiza seus dados
     if (selectedStudent) {
       const updated = list.find((s) => s.id === selectedStudent.id);
       if (updated) setSelectedStudent(updated);
     }
   };
 
+  const loadTemplates = async () => {
+    const list = await syncTemplatesWithCloud();
+    setTemplates(list);
+  };
+
   useEffect(() => {
     loadStudents();
+    loadTemplates();
   }, [currentUser]);
 
   const selectStudent = (student: UserProfile) => {
@@ -228,7 +260,8 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     }
   };
 
-  const handleAddExercise = async (e: React.FormEvent) => {
+  // Adiciona exercício manual/personalizado
+  const handleAddManualExercise = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedStudent || !showNewExerciseModal || !exName.trim()) return;
 
@@ -254,6 +287,44 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     setExName('');
   };
 
+  // Adiciona exercício pré-mapeado da biblioteca diretamente à ficha
+  const handleAddPresetExercise = async (preset: PresetExercise) => {
+    if (!selectedStudent || !showNewExerciseModal) return;
+
+    const newEx: ExerciseTemplate = {
+      id: `ex-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      name: preset.name,
+      muscleGroup: preset.muscleGroup,
+      targetSets: preset.defaultSets,
+      targetReps: preset.defaultReps,
+      restSeconds: preset.defaultRestSeconds,
+      lastWeightKg: preset.defaultWeightKg,
+      notes: preset.notes,
+    };
+
+    const targetPlan = studentPlans.find((p) => p.id === showNewExerciseModal);
+    if (targetPlan) {
+      targetPlan.exercises.push(newEx);
+      savePlanForStudent(targetPlan);
+      await uploadPlanToCloud(targetPlan);
+      refreshStudentData(selectedStudent.id);
+
+      setRecentlyAddedExId(preset.id);
+      setTimeout(() => setRecentlyAddedExId(null), 1500);
+    }
+  };
+
+  // Carrega exercício pré-mapeado no formulário manual para ajustes finos
+  const handleSelectPresetToCustomize = (preset: PresetExercise) => {
+    setExName(preset.name);
+    setExMuscle(preset.muscleGroup);
+    setExSets(preset.defaultSets);
+    setExReps(preset.defaultReps);
+    setExRest(preset.defaultRestSeconds);
+    setExWeight(preset.defaultWeightKg);
+    setExerciseModalTab('manual');
+  };
+
   const handleDeleteExercise = async (planId: string, exId: string) => {
     if (!selectedStudent) return;
     const targetPlan = studentPlans.find((p) => p.id === planId);
@@ -262,6 +333,48 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
       savePlanForStudent(targetPlan);
       await uploadPlanToCloud(targetPlan);
       refreshStudentData(selectedStudent.id);
+    }
+  };
+
+  // ==========================================
+  // FUNÇÕES DE MODELOS / TEMPLATES
+  // ==========================================
+
+  const handleOpenSaveAsTemplate = (plan: WorkoutPlan) => {
+    setSaveAsTemplatePlan(plan);
+    setTemplateNameInput(plan.name);
+  };
+
+  const handleConfirmSaveAsTemplate = () => {
+    if (!saveAsTemplatePlan) return;
+    const created = savePlanAsTemplate(saveAsTemplatePlan, currentUser.id, templateNameInput);
+    setTemplates((prev) => [...prev.filter((t) => t.id !== created.id), created]);
+    setSaveAsTemplatePlan(null);
+    setTemplateFeedback(`Ficha "${created.name}" salva como modelo com sucesso!`);
+    setTimeout(() => setTemplateFeedback(null), 3500);
+  };
+
+  const handleApplyTemplate = async (template: WorkoutPlanTemplate, student: UserProfile) => {
+    setIsApplyingTemplate(true);
+    try {
+      await applyTemplateToStudent(template, student.id, currentUser.id);
+      if (selectedStudent && selectedStudent.id === student.id) {
+        refreshStudentData(student.id);
+      }
+      setShowTemplatesModal(false);
+      setTemplateFeedback(`Modelo "${template.name}" aplicado em ${student.name} com sucesso!`);
+      setTimeout(() => setTemplateFeedback(null), 3500);
+    } catch (err: any) {
+      alert('Erro ao aplicar modelo: ' + (err?.message || 'Erro desconhecido'));
+    } finally {
+      setIsApplyingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = (templateId: string) => {
+    if (confirm('Deseja realmente excluir este modelo de treino salvo?')) {
+      deletePlanTemplate(templateId);
+      setTemplates((prev) => prev.filter((t) => t.id !== templateId));
     }
   };
 
@@ -277,6 +390,15 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     if (statusFilter === 'ativos') return matchesSearch && status === 'ativo';
     if (statusFilter === 'inativos') return matchesSearch && status === 'inativo';
     return matchesSearch;
+  });
+
+  const filteredPresets = PRESET_EXERCISES.filter((ex) => {
+    const matchesGroup = presetMuscleFilter === 'Todos' || ex.muscleGroup === presetMuscleFilter;
+    const matchesSearch =
+      ex.name.toLowerCase().includes(presetSearch.toLowerCase()) ||
+      ex.muscleGroup.toLowerCase().includes(presetSearch.toLowerCase()) ||
+      (ex.notes && ex.notes.toLowerCase().includes(presetSearch.toLowerCase()));
+    return matchesGroup && matchesSearch;
   });
 
   return (
@@ -338,6 +460,16 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
           </div>
         </div>
       </header>
+
+      {/* Alerta de Feedback de Modelo */}
+      {templateFeedback && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 w-full max-w-sm px-4 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="bg-emerald-950/90 border border-emerald-500/40 text-emerald-200 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 backdrop-blur-md">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+            <p className="text-xs font-semibold">{templateFeedback}</p>
+          </div>
+        </div>
+      )}
 
       {/* Conteúdo Principal */}
       <main className="flex-1 w-full max-w-lg mx-auto p-4 space-y-4 pb-20">
@@ -452,24 +584,49 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-white">Fichas de Treino do Aluno</h3>
-                  <p className="text-[11px] text-zinc-400">Monte e modifique os treinos dele</p>
+                  <p className="text-[11px] text-zinc-400">Monte, replique modelos ou personalize</p>
                 </div>
-                <button
-                  onClick={() => setShowNewPlanModal(true)}
-                  className="flex items-center space-x-1.5 py-1.5 px-3 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-md active:scale-95 transition"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Nova Ficha</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      setTargetStudentForTemplate(selectedStudent);
+                      setShowTemplatesModal(true);
+                    }}
+                    className="flex items-center space-x-1.5 py-1.5 px-3 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 rounded-xl text-xs font-semibold shadow-sm active:scale-95 transition"
+                    title="Replicar modelo salvo para este aluno"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>Usar Modelo</span>
+                  </button>
+                  <button
+                    onClick={() => setShowNewPlanModal(true)}
+                    className="flex items-center space-x-1.5 py-1.5 px-3 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-md active:scale-95 transition"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova Ficha</span>
+                  </button>
+                </div>
               </div>
 
               {studentPlans.length === 0 ? (
-                <div className="p-6 text-center rounded-2xl bg-zinc-900 border border-dashed border-zinc-800 text-zinc-400 text-xs">
-                  <Dumbbell className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
-                  <p className="font-semibold text-zinc-300">Nenhum treino montado ainda.</p>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    Clique em "+ Nova Ficha" para criar o Treino A, B, etc.
-                  </p>
+                <div className="p-6 text-center rounded-2xl bg-zinc-900 border border-dashed border-zinc-800 text-zinc-400 text-xs space-y-3">
+                  <Dumbbell className="w-8 h-8 text-zinc-600 mx-auto" />
+                  <div>
+                    <p className="font-semibold text-zinc-300">Nenhum treino montado ainda.</p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      Você pode criar uma nova ficha do zero ou importar um modelo salvo com 1 clique!
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setTargetStudentForTemplate(selectedStudent);
+                      setShowTemplatesModal(true);
+                    }}
+                    className="inline-flex items-center space-x-1.5 py-2 px-3.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 active:scale-95 transition"
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span>Importar de um Modelo Pronto</span>
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -490,14 +647,32 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                         </div>
 
                         <div className="flex items-center space-x-1">
+                          {/* Salvar como Modelo Reutilizável */}
                           <button
-                            onClick={() => setShowNewExerciseModal(plan.id)}
-                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-purple-400 text-xs flex items-center gap-1 font-semibold"
+                            onClick={() => handleOpenSaveAsTemplate(plan)}
+                            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-indigo-400 text-xs flex items-center gap-1 font-semibold transition"
+                            title="Salvar esta ficha como modelo para usar em outros alunos"
+                          >
+                            <BookmarkPlus className="w-3.5 h-3.5" />
+                            <span className="text-[10px] hidden sm:inline">Salvar Modelo</span>
+                          </button>
+
+                          {/* Adicionar Exercício */}
+                          <button
+                            onClick={() => {
+                              setShowNewExerciseModal(plan.id);
+                              setExerciseModalTab('preset');
+                              setPresetSearch('');
+                              setPresetMuscleFilter('Todos');
+                            }}
+                            className="p-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs flex items-center gap-1 font-semibold transition"
                             title="Adicionar Exercício"
                           >
                             <Plus className="w-3.5 h-3.5" />
                             <span className="text-[10px]">Exercício</span>
                           </button>
+
+                          {/* Excluir Ficha */}
                           <button
                             onClick={() => handleDeletePlan(plan.id)}
                             className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400"
@@ -511,9 +686,21 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                       {/* Lista de Exercícios da Ficha */}
                       <div className="p-3 space-y-1.5 bg-zinc-950/40">
                         {plan.exercises.length === 0 ? (
-                          <p className="text-[11px] text-zinc-500 text-center py-2">
-                            Nenhum exercício ainda. Clique em "+ Exercício".
-                          </p>
+                          <div className="py-4 text-center">
+                            <p className="text-[11px] text-zinc-500 mb-2">
+                              Nenhum exercício ainda nesta ficha.
+                            </p>
+                            <button
+                              onClick={() => {
+                                setShowNewExerciseModal(plan.id);
+                                setExerciseModalTab('preset');
+                              }}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-600/20 border border-purple-500/30 text-purple-300 text-xs font-semibold hover:bg-purple-600/30"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Escolher da Biblioteca Pré-Mapeada</span>
+                            </button>
+                          </div>
                         ) : (
                           plan.exercises.map((ex) => (
                             <div
@@ -537,11 +724,15 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                                     </>
                                   ) : null}
                                 </div>
+                                {ex.notes && (
+                                  <p className="text-[10px] text-zinc-500 mt-0.5">{ex.notes}</p>
+                                )}
                               </div>
 
                               <button
                                 onClick={() => handleDeleteExercise(plan.id, ex.id)}
                                 className="p-1 text-zinc-600 hover:text-red-400 transition"
+                                title="Remover exercício"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -558,34 +749,50 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         ) : (
           /* VISÃO 2: LISTAGEM GERAL DE ALUNOS */
           <div className="space-y-4">
-            {/* Banner com botão Convidar Aluno */}
-            <div className="bg-gradient-to-br from-purple-950/60 to-zinc-900 border border-purple-500/20 rounded-3xl p-4 shadow-lg flex items-center justify-between">
-              <div>
-                <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">
-                  Alunos Cadastrados
-                </span>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <h2 className="text-2xl font-black text-white">{students.length}</h2>
-                  <span className="text-xs text-zinc-400">
-                    ({activeCount} ativos{inactiveCount > 0 ? `, ${inactiveCount} inativos` : ''})
+            {/* Banner com botões de Convidar Aluno e Modelos Salvos */}
+            <div className="bg-gradient-to-br from-purple-950/60 to-zinc-900 border border-purple-500/20 rounded-3xl p-4 shadow-lg space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">
+                    Alunos Cadastrados
                   </span>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <h2 className="text-2xl font-black text-white">{students.length}</h2>
+                    <span className="text-xs text-zinc-400">
+                      ({activeCount} ativos{inactiveCount > 0 ? `, ${inactiveCount} inativos` : ''})
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400">Gerencie treinos individuais e evolução</p>
                 </div>
-                <p className="text-[11px] text-zinc-400">Gerencie treinos individuais e evolução</p>
               </div>
 
-              <button
-                onClick={() => {
-                  setInviteResult(null);
-                  setInviteName('');
-                  setInviteEmail('');
-                  setInvitePhone('');
-                  setShowInviteModal(true);
-                }}
-                className="py-2.5 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 shadow-lg shadow-purple-600/30 active:scale-95 transition"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>Convidar Aluno</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => {
+                    setTargetStudentForTemplate(null);
+                    setShowTemplatesModal(true);
+                  }}
+                  className="py-2.5 px-3.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-indigo-300 rounded-2xl text-xs font-bold flex items-center space-x-1.5 shadow-sm active:scale-95 transition"
+                  title="Ver e gerenciar fichas modelos salvas"
+                >
+                  <Layers className="w-4 h-4 text-indigo-400" />
+                  <span>Modelos Salvos ({templates.length})</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setInviteResult(null);
+                    setInviteName('');
+                    setInviteEmail('');
+                    setInvitePhone('');
+                    setShowInviteModal(true);
+                  }}
+                  className="flex-1 py-2.5 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-lg shadow-purple-600/30 active:scale-95 transition"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Convidar Aluno</span>
+                </button>
+              </div>
             </div>
 
             {/* Filtros de Status (Todos / Ativos / Inativos) */}
@@ -704,7 +911,469 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         )}
       </main>
 
+      {/* ======================================================== */}
+      {/* MODAL: ADICIONAR EXERCÍCIO (BIBLIOTECA PRÉ-MAPEADA / MANUAL) */}
+      {/* ======================================================== */}
+      {showNewExerciseModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-5 pb-safe shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 flex-shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-white">Adicionar Exercício à Ficha</h3>
+                <p className="text-[11px] text-zinc-400">Escolha da biblioteca pronta ou crie manualmente</p>
+              </div>
+              <button
+                onClick={() => setShowNewExerciseModal(null)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Alternador de Abas: Prontos vs Manual */}
+            <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 my-3 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setExerciseModalTab('preset')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  exerciseModalTab === 'preset'
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Biblioteca Pronta ({filteredPresets.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExerciseModalTab('manual')}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  exerciseModalTab === 'manual'
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Criar Manualmente</span>
+              </button>
+            </div>
+
+            {/* ABA 1: BIBLIOTECA DE EXERCÍCIOS PRÉ-MAPEADOS */}
+            {exerciseModalTab === 'preset' ? (
+              <div className="space-y-3 flex-1 flex flex-col min-h-0">
+                {/* Busca e Filtros */}
+                <div className="space-y-2 flex-shrink-0">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Buscar exercício (ex: Supino, Puxada, Agachamento...)"
+                      value={presetSearch}
+                      onChange={(e) => setPresetSearch(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  {/* Pills de Grupos Musculares com Rolagem */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    <button
+                      onClick={() => setPresetMuscleFilter('Todos')}
+                      className={`px-3 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap transition ${
+                        presetMuscleFilter === 'Todos'
+                          ? 'bg-purple-600 text-white shadow-sm'
+                          : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    {MUSCLE_GROUPS.map((group) => (
+                      <button
+                        key={group}
+                        onClick={() => setPresetMuscleFilter(group)}
+                        className={`px-3 py-1 rounded-xl text-[11px] font-bold whitespace-nowrap transition ${
+                          presetMuscleFilter === group
+                            ? 'bg-purple-600 text-white shadow-sm'
+                            : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {group}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Lista de Exercícios Pré-Mapeados */}
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[220px]">
+                  {filteredPresets.length === 0 ? (
+                    <div className="py-8 text-center text-xs text-zinc-500">
+                      Nenhum exercício encontrado para "{presetSearch}".
+                    </div>
+                  ) : (
+                    filteredPresets.map((preset) => (
+                      <div
+                        key={preset.id}
+                        className="bg-zinc-950/80 border border-zinc-800/80 hover:border-purple-500/40 rounded-xl p-2.5 transition flex items-center justify-between"
+                      >
+                        <div className="flex-1 mr-2">
+                          <div className="flex items-center gap-1.5">
+                            <h5 className="text-xs font-bold text-white">{preset.name}</h5>
+                            <span className="text-[9px] font-bold bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded border border-indigo-500/30">
+                              {preset.muscleGroup}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-400">
+                            <span>{preset.defaultSets} séries</span>
+                            <span>•</span>
+                            <span>{preset.defaultReps} reps</span>
+                            <span>•</span>
+                            <span>{preset.defaultRestSeconds}s descanso</span>
+                            {preset.defaultWeightKg > 0 && (
+                              <>
+                                <span>•</span>
+                                <span className="text-zinc-300 font-semibold">{preset.defaultWeightKg} kg</span>
+                              </>
+                            )}
+                          </div>
+                          {preset.notes && (
+                            <p className="text-[10px] text-zinc-500 line-clamp-1 mt-0.5">{preset.notes}</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectPresetToCustomize(preset)}
+                            className="px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-medium transition"
+                            title="Ajustar repetições ou carga antes de adicionar"
+                          >
+                            Ajustar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddPresetExercise(preset)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                              recentlyAddedExId === preset.id
+                                ? 'bg-emerald-600 text-white shadow-md'
+                                : 'bg-purple-600 hover:bg-purple-500 text-white active:scale-95'
+                            }`}
+                          >
+                            {recentlyAddedExId === preset.id ? (
+                              <>
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Adicionado!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Adicionar</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-zinc-800 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewExerciseModal(null)}
+                    className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl text-xs transition"
+                  >
+                    Concluir e Voltar à Ficha
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ABA 2: FORMULÁRIO MANUAL */
+              <form onSubmit={handleAddManualExercise} className="space-y-3 pt-1 flex-1 overflow-y-auto">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome do Exercício</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Supino Reto com Barra"
+                    value={exName}
+                    onChange={(e) => setExName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Grupo Muscular</label>
+                    <select
+                      value={exMuscle}
+                      onChange={(e) => setExMuscle(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                    >
+                      {MUSCLE_GROUPS.map((group) => (
+                        <option key={group} value={group}>
+                          {group}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Carga Inicial (kg)</label>
+                    <input
+                      type="number"
+                      value={exWeight}
+                      onChange={(e) => setExWeight(Number(e.target.value))}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Séries</label>
+                    <input
+                      type="number"
+                      value={exSets}
+                      onChange={(e) => setExSets(Number(e.target.value))}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Reps</label>
+                    <input
+                      type="text"
+                      value={exReps}
+                      onChange={(e) => setExReps(e.target.value)}
+                      placeholder="8-12"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-300 mb-1">Descanso (s)</label>
+                    <input
+                      type="number"
+                      value={exRest}
+                      onChange={(e) => setExRest(Number(e.target.value))}
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full mt-2 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-lg text-xs transition"
+                >
+                  Salvar Exercício na Ficha
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: MODELOS / TEMPLATES DE FICHAS DE TREINO */}
+      {/* ======================================================== */}
+      {showTemplatesModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-5 pb-safe shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    {targetStudentForTemplate
+                      ? `Aplicar Modelo em ${targetStudentForTemplate.name}`
+                      : 'Modelos de Fichas de Treino'}
+                  </h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Fichas prontas que você pode replicar para qualquer aluno com 1 clique
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowTemplatesModal(false);
+                  setTargetStudentForTemplate(null);
+                }}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Lista de Modelos Salvos */}
+            <div className="flex-1 overflow-y-auto space-y-3 py-3 pr-1 min-h-[260px]">
+              {templates.length === 0 ? (
+                <div className="py-8 text-center text-xs text-zinc-500">
+                  Nenhum modelo cadastrado ainda.
+                </div>
+              ) : (
+                templates.map((tpl) => (
+                  <div
+                    key={tpl.id}
+                    className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3.5 space-y-2.5 shadow-sm hover:border-indigo-500/40 transition"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider">
+                          {tpl.category}
+                        </span>
+                        <h4 className="text-sm font-bold text-white">{tpl.name}</h4>
+                        {tpl.description && (
+                          <p className="text-[11px] text-zinc-400 mt-0.5">{tpl.description}</p>
+                        )}
+                      </div>
+
+                      {tpl.createdBy !== 'global' && (
+                        <button
+                          onClick={() => handleDeleteTemplate(tpl.id)}
+                          className="p-1 text-zinc-600 hover:text-red-400 transition"
+                          title="Excluir este modelo"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Preview dos Exercícios */}
+                    <div className="bg-zinc-900/90 rounded-xl p-2.5">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 mb-1.5">
+                        <span>Exercícios ({tpl.exercises.length}):</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {tpl.exercises.slice(0, 5).map((ex, i) => (
+                          <span
+                            key={i}
+                            className="text-[10px] bg-zinc-800/80 text-zinc-300 px-2 py-0.5 rounded-lg border border-zinc-700/60"
+                          >
+                            {ex.name}
+                          </span>
+                        ))}
+                        {tpl.exercises.length > 5 && (
+                          <span className="text-[10px] text-zinc-500 self-center">
+                            +{tpl.exercises.length - 5} outros
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Botão de Ação: Aplicar no Aluno */}
+                    {targetStudentForTemplate ? (
+                      <button
+                        onClick={() => handleApplyTemplate(tpl, targetStudentForTemplate)}
+                        disabled={isApplyingTemplate}
+                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 active:scale-98 transition disabled:opacity-50"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>
+                          {isApplyingTemplate ? 'Aplicando Treino...' : `Aplicar em ${targetStudentForTemplate.name}`}
+                        </span>
+                      </button>
+                    ) : (
+                      /* Se aberto do painel geral, permite selecionar o aluno */
+                      <div className="pt-1">
+                        <label className="block text-[10px] font-semibold text-zinc-400 mb-1">
+                          Replicar esta ficha para um aluno:
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            defaultValue=""
+                            onChange={(e) => {
+                              const st = students.find((s) => s.id === e.target.value);
+                              if (st) handleApplyTemplate(tpl, st);
+                            }}
+                            className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                          >
+                            <option value="" disabled>
+                              Escolha o aluno para receber este treino...
+                            </option>
+                            {students
+                              .filter((s) => (s.status || 'ativo') === 'ativo')
+                              .map((st) => (
+                                <option key={st.id} value={st.id}>
+                                  {st.name} ({st.email})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: SALVAR FICHA ATUAL COMO MODELO */}
+      {/* ======================================================== */}
+      {saveAsTemplatePlan && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <BookmarkPlus className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white">Salvar Ficha como Modelo</h3>
+              </div>
+              <button
+                onClick={() => setSaveAsTemplatePlan(null)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-zinc-400">
+                Este treino ficará salvo na sua biblioteca de modelos com todos os{' '}
+                <span className="text-white font-semibold">
+                  {saveAsTemplatePlan.exercises.length} exercícios
+                </span>
+                , pronto para ser replicado para qualquer aluno que você desejar.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome do Modelo</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Treino A - Hipertrofia Peitoral"
+                  value={templateNameInput}
+                  onChange={(e) => setTemplateNameInput(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  required
+                />
+              </div>
+
+              <div className="bg-zinc-950/70 border border-zinc-800/80 rounded-xl p-3 text-xs text-zinc-300 space-y-1">
+                <p>
+                  <span className="text-zinc-500">Divisão:</span>{' '}
+                  <span className="text-indigo-400 font-bold">{saveAsTemplatePlan.category}</span>
+                </p>
+                <p>
+                  <span className="text-zinc-500">Exercícios incluídos:</span>{' '}
+                  <span className="text-white">{saveAsTemplatePlan.exercises.length}</span>
+                </p>
+              </div>
+
+              <button
+                onClick={handleConfirmSaveAsTemplate}
+                className="w-full py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/30 text-xs flex items-center justify-center gap-2 active:scale-98 transition"
+              >
+                <BookmarkPlus className="w-4 h-4" />
+                <span>Salvar Modelo na Biblioteca</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL: CONVIDAR ALUNO (E-MAIL + WHATSAPP) */}
+      {/* ======================================================== */}
       {showInviteModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl">
@@ -837,7 +1506,9 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         </div>
       )}
 
-      {/* MODAL: NOVA FICHA PARA O ALUNO */}
+      {/* ======================================================== */}
+      {/* MODAL: NOVA FICHA PARA O ALUNO (DO ZERO) */}
+      {/* ======================================================== */}
       {showNewPlanModal && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl">
@@ -892,105 +1563,6 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 className="w-full mt-2 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-lg text-xs"
               >
                 Salvar Ficha do Aluno
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: ADICIONAR EXERCÍCIO NA FICHA DO ALUNO */}
-      {showNewExerciseModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h3 className="text-base font-bold text-white">Adicionar Exercício ao Treino</h3>
-              <button
-                onClick={() => setShowNewExerciseModal(null)}
-                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAddExercise} className="space-y-3 pt-3">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome do Exercício</label>
-                <input
-                  type="text"
-                  placeholder="Ex: Supino Reto com Barra"
-                  value={exName}
-                  onChange={(e) => setExName(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Grupo Muscular</label>
-                  <select
-                    value={exMuscle}
-                    onChange={(e) => setExMuscle(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
-                  >
-                    <option value="Peito">Peito</option>
-                    <option value="Costas">Costas</option>
-                    <option value="Pernas">Pernas</option>
-                    <option value="Ombros">Ombros</option>
-                    <option value="Bíceps">Bíceps</option>
-                    <option value="Tríceps">Tríceps</option>
-                    <option value="Abdômen">Abdômen</option>
-                    <option value="Cardio">Cardio</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Carga Inicial (kg)</label>
-                  <input
-                    type="number"
-                    value={exWeight}
-                    onChange={(e) => setExWeight(Number(e.target.value))}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Séries</label>
-                  <input
-                    type="number"
-                    value={exSets}
-                    onChange={(e) => setExSets(Number(e.target.value))}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Reps</label>
-                  <input
-                    type="text"
-                    value={exReps}
-                    onChange={(e) => setExReps(e.target.value)}
-                    placeholder="8-12"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Descanso (s)</label>
-                  <input
-                    type="number"
-                    value={exRest}
-                    onChange={(e) => setExRest(Number(e.target.value))}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full mt-2 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-lg text-xs"
-              >
-                Salvar Exercício
               </button>
             </form>
           </div>

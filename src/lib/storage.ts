@@ -1,10 +1,11 @@
-import type { WeightEntry, WorkoutLog, WorkoutPlan } from '../types';
+import type { WeightEntry, WorkoutLog, WorkoutPlan, WorkoutPlanTemplate } from '../types';
 import { getSupabaseClient } from './supabase';
 
 const KEYS = {
   PLANS: 'fittrack_workout_plans',
   LOGS: 'fittrack_workout_logs',
   WEIGHTS: 'fittrack_weight_entries',
+  TEMPLATES: 'fittrack_plan_templates',
 };
 
 // Planos Iniciais Mock vinculados ao aluno-lucas
@@ -421,6 +422,208 @@ export async function syncWeightsForStudent(studentId: string): Promise<WeightEn
     }
   } catch (e) {
     console.error(e);
+  }
+  return local;
+}
+
+// ==========================================
+// MODELOS / TEMPLATES DE FICHAS DE TREINO
+// ==========================================
+
+export const DEFAULT_PLAN_TEMPLATES: WorkoutPlanTemplate[] = [
+  {
+    id: 'template-a-push',
+    createdBy: 'global',
+    category: 'Treino A',
+    name: 'Peito, Ombros & Tríceps (Push)',
+    description: 'Ficha completa de empurrar focando hipertrofia e força',
+    createdAt: '2026-09-01',
+    exercises: [
+      { id: 't-ex-1', name: 'Supino Reto com Barra', muscleGroup: 'Peito', targetSets: 4, targetReps: '8-10', restSeconds: 90, lastWeightKg: 50 },
+      { id: 't-ex-2', name: 'Supino Inclinado com Halteres', muscleGroup: 'Peito', targetSets: 4, targetReps: '10-12', restSeconds: 75, lastWeightKg: 20 },
+      { id: 't-ex-3', name: 'Crossover na Polia Média', muscleGroup: 'Peito', targetSets: 3, targetReps: '12-15', restSeconds: 60, lastWeightKg: 15 },
+      { id: 't-ex-4', name: 'Desenvolvimento com Halteres Sentado', muscleGroup: 'Ombros', targetSets: 4, targetReps: '10-12', restSeconds: 75, lastWeightKg: 16 },
+      { id: 't-ex-5', name: 'Elevação Lateral com Halteres', muscleGroup: 'Ombros', targetSets: 4, targetReps: '12-15', restSeconds: 60, lastWeightKg: 8 },
+      { id: 't-ex-6', name: 'Tríceps Corda na Polia Alta', muscleGroup: 'Tríceps', targetSets: 4, targetReps: '12-15', restSeconds: 60, lastWeightKg: 25 },
+    ],
+  },
+  {
+    id: 'template-b-pull',
+    createdBy: 'global',
+    category: 'Treino B',
+    name: 'Costas & Bíceps (Pull)',
+    description: 'Ficha completa de puxar para largura dorsal e bíceps denso',
+    createdAt: '2026-09-01',
+    exercises: [
+      { id: 't-ex-7', name: 'Puxada Alta Frontal na Polia', muscleGroup: 'Costas', targetSets: 4, targetReps: '10-12', restSeconds: 90, lastWeightKg: 50 },
+      { id: 't-ex-8', name: 'Remada Curvada com Barra', muscleGroup: 'Costas', targetSets: 4, targetReps: '8-10', restSeconds: 90, lastWeightKg: 50 },
+      { id: 't-ex-9', name: 'Remada Baixa com Triângulo', muscleGroup: 'Costas', targetSets: 3, targetReps: '10-12', restSeconds: 75, lastWeightKg: 45 },
+      { id: 't-ex-10', name: 'Crucifixo Inverso na Máquina', muscleGroup: 'Costas', targetSets: 3, targetReps: '12-15', restSeconds: 60, lastWeightKg: 30 },
+      { id: 't-ex-11', name: 'Rosca Direta com Barra W', muscleGroup: 'Bíceps', targetSets: 4, targetReps: '10-12', restSeconds: 60, lastWeightKg: 20 },
+      { id: 't-ex-12', name: 'Rosca Martelo com Halteres', muscleGroup: 'Bíceps', targetSets: 4, targetReps: '10-12', restSeconds: 60, lastWeightKg: 12 },
+    ],
+  },
+  {
+    id: 'template-c-legs',
+    createdBy: 'global',
+    category: 'Treino C',
+    name: 'Pernas & Abdômen Completo (Legs)',
+    description: 'Quadríceps, posteriores, panturrilha e core completo',
+    createdAt: '2026-09-01',
+    exercises: [
+      { id: 't-ex-13', name: 'Agachamento Livre com Barra', muscleGroup: 'Pernas', targetSets: 4, targetReps: '8-10', restSeconds: 120, lastWeightKg: 60 },
+      { id: 't-ex-14', name: 'Leg Press 45°', muscleGroup: 'Pernas', targetSets: 4, targetReps: '10-12', restSeconds: 90, lastWeightKg: 160 },
+      { id: 't-ex-15', name: 'Cadeira Extensora', muscleGroup: 'Pernas', targetSets: 4, targetReps: '12-15', restSeconds: 60, lastWeightKg: 45 },
+      { id: 't-ex-16', name: 'Mesa Flexora', muscleGroup: 'Pernas', targetSets: 4, targetReps: '10-12', restSeconds: 60, lastWeightKg: 35 },
+      { id: 't-ex-17', name: 'Panturrilha em Pé na Máquina', muscleGroup: 'Pernas', targetSets: 4, targetReps: '15-20', restSeconds: 45, lastWeightKg: 50 },
+      { id: 't-ex-18', name: 'Prancha Abdominal Estática', muscleGroup: 'Abdômen', targetSets: 3, targetReps: '45-60s', restSeconds: 45, lastWeightKg: 0 },
+    ],
+  },
+  {
+    id: 'template-d-gluteos',
+    createdBy: 'global',
+    category: 'Treino D',
+    name: 'Inferiores - Glúteos & Posterior (Foco Feminino)',
+    description: 'Ênfase máxima em glúteo máximo, médio e posteriores',
+    createdAt: '2026-09-01',
+    exercises: [
+      { id: 't-ex-19', name: 'Elevação Pélvica com Barra', muscleGroup: 'Pernas', targetSets: 4, targetReps: '10-12', restSeconds: 90, lastWeightKg: 50 },
+      { id: 't-ex-20', name: 'Agachamento Búlgaro', muscleGroup: 'Pernas', targetSets: 3, targetReps: '10 cada', restSeconds: 75, lastWeightKg: 10 },
+      { id: 't-ex-21', name: 'Stiff com Barra ou Halteres', muscleGroup: 'Pernas', targetSets: 4, targetReps: '10-12', restSeconds: 75, lastWeightKg: 30 },
+      { id: 't-ex-22', name: 'Cadeira Abdutora', muscleGroup: 'Pernas', targetSets: 4, targetReps: '15-20', restSeconds: 45, lastWeightKg: 45 },
+      { id: 't-ex-23', name: 'Mesa Flexora', muscleGroup: 'Pernas', targetSets: 3, targetReps: '12-15', restSeconds: 60, lastWeightKg: 35 },
+    ],
+  },
+];
+
+export function getAllPlanTemplates(): WorkoutPlanTemplate[] {
+  try {
+    const raw = localStorage.getItem(KEYS.TEMPLATES);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.setItem(KEYS.TEMPLATES, JSON.stringify(DEFAULT_PLAN_TEMPLATES));
+  return DEFAULT_PLAN_TEMPLATES;
+}
+
+export function saveAllPlanTemplates(templates: WorkoutPlanTemplate[]) {
+  localStorage.setItem(KEYS.TEMPLATES, JSON.stringify(templates));
+}
+
+export function savePlanAsTemplate(plan: WorkoutPlan, instructorId: string, customName?: string): WorkoutPlanTemplate {
+  const templates = getAllPlanTemplates();
+  const newTemplate: WorkoutPlanTemplate = {
+    id: `template-${Date.now()}`,
+    createdBy: instructorId,
+    category: plan.category,
+    name: customName?.trim() || plan.name,
+    description: plan.description,
+    exercises: JSON.parse(JSON.stringify(plan.exercises)),
+    createdAt: new Date().toISOString(),
+  };
+
+  templates.push(newTemplate);
+  saveAllPlanTemplates(templates);
+  uploadTemplateToCloud(newTemplate);
+  return newTemplate;
+}
+
+export function deletePlanTemplate(templateId: string) {
+  const templates = getAllPlanTemplates().filter((t) => t.id !== templateId);
+  saveAllPlanTemplates(templates);
+  deleteTemplateFromCloud(templateId);
+}
+
+export async function applyTemplateToStudent(
+  template: WorkoutPlanTemplate,
+  studentId: string,
+  instructorId: string
+): Promise<WorkoutPlan> {
+  const newPlan: WorkoutPlan = {
+    id: `plan-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    studentId,
+    createdBy: instructorId,
+    category: template.category,
+    name: template.name,
+    description: template.description,
+    exercises: template.exercises.map((ex, idx) => ({
+      ...ex,
+      id: `ex-${Date.now()}-${idx}`,
+    })),
+    updatedAt: new Date().toISOString(),
+  };
+
+  savePlanForStudent(newPlan);
+  await uploadPlanToCloud(newPlan);
+  return newPlan;
+}
+
+export async function uploadTemplateToCloud(template: WorkoutPlanTemplate) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  try {
+    await supabase.from('workout_plans').upsert({
+      id: template.id,
+      student_id: 'template',
+      created_by: template.createdBy,
+      name: template.name,
+      category: template.category,
+      description: template.description,
+      exercises: template.exercises,
+    });
+  } catch (e) {
+    console.warn('Falha ao subir modelo para o Supabase:', e);
+  }
+}
+
+export async function deleteTemplateFromCloud(templateId: string) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+  try {
+    await supabase.from('workout_plans').delete().eq('id', templateId);
+  } catch (e) {
+    console.warn('Falha ao deletar modelo no Supabase:', e);
+  }
+}
+
+export async function syncTemplatesWithCloud(): Promise<WorkoutPlanTemplate[]> {
+  const supabase = getSupabaseClient();
+  const local = getAllPlanTemplates();
+  if (!supabase) return local;
+
+  try {
+    const { data, error } = await supabase
+      .from('workout_plans')
+      .select('*')
+      .eq('student_id', 'template');
+
+    if (!error && data && data.length > 0) {
+      const cloudTemplates: WorkoutPlanTemplate[] = data.map((row: any) => ({
+        id: row.id,
+        createdBy: row.created_by || 'global',
+        name: row.name,
+        category: row.category,
+        description: row.description,
+        exercises: row.exercises || [],
+        createdAt: row.created_at || row.updated_at,
+      }));
+
+      const merged = [...cloudTemplates];
+      for (const def of DEFAULT_PLAN_TEMPLATES) {
+        if (!merged.some((m) => m.id === def.id || m.name === def.name)) {
+          merged.push(def);
+        }
+      }
+      saveAllPlanTemplates(merged);
+      return merged;
+    } else if (local.length > 0) {
+      for (const t of local) {
+        await uploadTemplateToCloud(t);
+      }
+    }
+  } catch (e) {
+    console.warn('Erro ao sincronizar templates com o Supabase:', e);
   }
   return local;
 }

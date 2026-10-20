@@ -50,6 +50,16 @@ export interface WorkoutPlan {
   updatedAt?: string;
 }
 
+export interface WorkoutPlanTemplate {
+  id: string;
+  createdBy: string;
+  name: string;
+  category: string;
+  description?: string;
+  exercises: ExerciseTemplate[];
+  createdAt?: string;
+}
+
 export interface CompletedExerciseLog {
   exerciseId: string;
   exerciseName: string;
