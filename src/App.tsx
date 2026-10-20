@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import type { TabType } from './components/BottomNav';
 import { SupabaseModal } from './components/SupabaseModal';
+import { InstallPromptModal } from './components/InstallPromptModal';
 import { TodayScreen } from './screens/TodayScreen';
 import { WorkoutsScreen } from './screens/WorkoutsScreen';
 import { WeightScreen } from './screens/WeightScreen';
@@ -25,6 +26,7 @@ import {
 } from './lib/storage';
 import { getSupabaseClient } from './lib/supabase';
 import type { WorkoutPlan, WorkoutLog, WeightEntry, UserProfile } from './types';
+import { isUserAdmin } from './types';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(getCurrentUser());
@@ -107,26 +109,35 @@ export function App() {
   // Se o aluno veio de um link de redefinição de senha enviado por e-mail
   if (isResettingPassword) {
     return (
-      <ResetPasswordScreen
-        onPasswordResetDone={() => {
-          setIsResettingPassword(false);
-          if (typeof window !== 'undefined' && window.history.replaceState) {
-            window.history.replaceState(null, '', window.location.pathname);
-          }
-        }}
-      />
+      <>
+        <InstallPromptModal />
+        <ResetPasswordScreen
+          onPasswordResetDone={() => {
+            setIsResettingPassword(false);
+            if (typeof window !== 'undefined' && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname);
+            }
+          }}
+        />
+      </>
     );
   }
 
   // Se nenhum usuário estiver logado, exibe tela de login / cadastro
   if (!currentUser) {
-    return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
-  }
-
-  // Se for professor e NÃO estiver simulando um aluno, exibe o painel do professor
-  if (currentUser.role === 'professor' && !simulatingStudent) {
     return (
       <>
+        <InstallPromptModal />
+        <AuthScreen onLoginSuccess={handleLoginSuccess} />
+      </>
+    );
+  }
+
+  // Se for professor ou admin master e NÃO estiver simulando um aluno, exibe o painel de gestão
+  if ((currentUser.role === 'professor' || currentUser.role === 'admin' || isUserAdmin(currentUser)) && !simulatingStudent) {
+    return (
+      <>
+        <InstallPromptModal />
         <ProfessorScreen
           currentUser={currentUser}
           onLogout={handleLogout}
@@ -137,7 +148,7 @@ export function App() {
           }}
         />
 
-        {/* Modal do Supabase acessível no painel do professor */}
+        {/* Modal do Supabase acessível no painel do professor (apenas para Admin Master) */}
         <SupabaseModal
           isOpen={isSettingsOpen}
           onClose={() => setIsSettingsOpen(false)}
@@ -155,6 +166,7 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
+      <InstallPromptModal />
       {/* Topo do Aluno */}
       <Header
         currentUser={targetStudent}

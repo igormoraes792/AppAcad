@@ -4,7 +4,6 @@ import {
   UserCheck,
   ShieldCheck,
   ArrowRight,
-  Sparkles,
   Mail,
   Lock,
   User,
@@ -85,19 +84,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = async (quickEmail: string) => {
-    setLoading(true);
-    setErrorMsg('');
-    setSuccessMsg('');
-    const res = await loginUser(quickEmail, '123456');
-    if (res.user) {
-      onLoginSuccess(res.user);
-    } else {
-      setErrorMsg(res.error || 'Erro no login rápido.');
-    }
-    setLoading(false);
   };
 
   return (
@@ -344,52 +330,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               </button>
             </form>
 
-            {/* Divisor */}
-            <div className="relative my-6 text-center">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-zinc-800"></div>
-              </div>
-              <span className="relative bg-zinc-900 px-3 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                Acesso Rápido para Teste
-              </span>
-            </div>
-
-            {/* Botões de Acesso Rápido */}
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('igor@personal.com')}
-                className="w-full p-2.5 rounded-xl bg-purple-950/40 hover:bg-purple-900/40 border border-purple-500/30 flex items-center justify-between text-left transition"
-              >
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs">
-                    P
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-white block">Visão: Igor Personal</span>
-                    <span className="text-[10px] text-purple-300">Painel do Professor (montar treinos)</span>
-                  </div>
-                </div>
-                <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('lucas@aluno.com')}
-                className="w-full p-2.5 rounded-xl bg-indigo-950/40 hover:bg-indigo-900/40 border border-indigo-500/30 flex items-center justify-between text-left transition"
-              >
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs">
-                    A
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-white block">Visão: Aluno Lucas</span>
-                    <span className="text-[10px] text-indigo-300">Treinos montados, pesos e evolução</span>
-                  </div>
-                </div>
-                <ArrowRight className="w-3.5 h-3.5 text-indigo-400" />
-              </button>
-            </div>
           </>
         )}
       </div>

@@ -1,16 +1,25 @@
-export type UserRole = 'aluno' | 'professor';
+export type UserRole = 'aluno' | 'professor' | 'admin';
+
+export type UserStatus = 'ativo' | 'inativo';
 
 export interface UserProfile {
   id: string;
   email: string;
   name: string;
   role: UserRole;
+  status?: UserStatus;
+  isAdmin?: boolean;
   instructorId?: string;
   instructorName?: string;
   phone?: string;
   avatarUrl?: string;
   createdAt: string;
 }
+
+export const isUserAdmin = (user: UserProfile | null): boolean => {
+  if (!user) return false;
+  return user.role === 'admin' || user.email?.toLowerCase().trim() === 'igormoraes792@gmail.com';
+};
 
 export interface SetLog {
   setNumber: number;

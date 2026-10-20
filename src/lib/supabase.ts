@@ -1,7 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { UserProfile } from '../types';
+import type { UserProfile, UserStatus } from '../types';
 
 const STORAGE_KEY = 'fittrack_supabase_config';
+
+// Credenciais padrão da nuvem para garantir sincronia 100% entre PC e Mobile
+const DEFAULT_CLOUD_URL = 'https://bpjryybqkryeoyonsqdt.supabase.co';
+const DEFAULT_CLOUD_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwanJ5eWJxa3J5ZW95b25zcWR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyNjc1NzQsImV4cCI6MjEwNzg0MzU3NH0.As257qDt6_Er3n_IB-0MC2E9P0NvLNv-scuVPF6xSdM';
 
 export interface SavedSupabaseConfig {
   url: string;
@@ -15,15 +19,15 @@ export function cleanSupabaseUrl(url: string): string {
   return clean;
 }
 
-export function getStoredSupabaseConfig(): SavedSupabaseConfig | null {
-  // 1. Variáveis de ambiente configuradas no .env (ou no painel da Vercel)
+export function getStoredSupabaseConfig(): SavedSupabaseConfig {
+  // 1. Variáveis de ambiente configuradas no .env (ou na Vercel)
   const envUrl = import.meta.env.VITE_SUPABASE_URL;
   const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
   if (envUrl && envKey && !envUrl.includes('sua-url-aqui')) {
     return { url: cleanSupabaseUrl(envUrl), anonKey: envKey.trim() };
   }
 
-  // 2. Fallback de localStorage (caso o professor configure via UI do app)
+  // 2. Fallback de localStorage
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -36,7 +40,8 @@ export function getStoredSupabaseConfig(): SavedSupabaseConfig | null {
     console.warn('Erro ao ler config do Supabase do localStorage', e);
   }
 
-  return null;
+  // 3. Fallback definitivo para o banco em produção (evita desconexão em mobile/PWA)
+  return { url: DEFAULT_CLOUD_URL, anonKey: DEFAULT_CLOUD_KEY };
 }
 
 export function saveStoredSupabaseConfig(config: SavedSupabaseConfig | null) {
@@ -67,30 +72,31 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 /**
- * Script SQL completo para criar a estrutura no Supabase.
- * O professor/administrador só precisa colar este script no "SQL Editor" do Supabase.
+ * Script SQL completo para criar ou atualizar o banco no Supabase.
  */
 export const SUPABASE_SQL_SCHEMA = `-- ============================================================
--- SCRIPT DE INICIALIZAÇÃO DO BANCO SUPABASE PARA FITTRACK PRO
--- Copie e cole no menu "SQL Editor" do seu painel Supabase
+-- SCRIPT FITTRACK PRO (COM SUPORTE A ADMIN E STATUS DE ALUNO)
 -- ============================================================
 
--- 1. Habilitar extensão para UUIDs se necessário
 create extension if not exists "uuid-ossp";
 
--- 2. Tabela de Perfis de Usuários (Alunos e Professores)
+-- 1. Tabela de Perfis de Usuários
 create table if not exists profiles (
   id text primary key,
   email text not null unique,
   name text not null,
-  role text not null check (role in ('aluno', 'professor')),
+  role text not null check (role in ('aluno', 'professor', 'admin')),
+  status text not null default 'ativo' check (status in ('ativo', 'inativo')),
   instructor_id text,
   instructor_name text,
   phone text,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 3. Tabela de Fichas de Treino (vinculada a cada aluno)
+-- Garantir coluna status se a tabela já existia
+alter table profiles add column if not exists status text default 'ativo';
+
+-- 2. Tabela de Fichas de Treino
 create table if not exists workout_plans (
   id text primary key,
   student_id text not null,
@@ -102,7 +108,7 @@ create table if not exists workout_plans (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 4. Tabela de Treinos Concluídos no Dia por cada Aluno
+-- 3. Tabela de Treinos Concluídos
 create table if not exists workout_logs (
   id text primary key,
   student_id text not null,
@@ -115,7 +121,7 @@ create table if not exists workout_logs (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 5. Tabela de Registros de Peso Corporal por cada Aluno
+-- 4. Tabela de Registros de Peso
 create table if not exists weight_entries (
   id text primary key,
   student_id text not null,
@@ -125,13 +131,13 @@ create table if not exists weight_entries (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 6. Índices para consultas ultra rápidas por Aluno
+-- Índices
 create index if not exists idx_workout_plans_student on workout_plans(student_id);
 create index if not exists idx_workout_logs_student on workout_logs(student_id);
 create index if not exists idx_weight_entries_student on weight_entries(student_id);
 create index if not exists idx_profiles_instructor on profiles(instructor_id);
 
--- 7. Ativar Row Level Security com acesso aberto para simplificar conexões anônimas da API
+-- RLS
 alter table profiles enable row level security;
 alter table workout_plans enable row level security;
 alter table workout_logs enable row level security;
@@ -146,20 +152,35 @@ create policy "Acesso livre weight_entries" on weight_entries for all using (tru
 /**
  * Funções auxiliares para buscar e salvar no Supabase
  */
-export async function supabaseFetchProfile(id: string): Promise<UserProfile | null> {
+export async function supabaseFetchProfile(idOrEmail: string): Promise<UserProfile | null> {
   const supabase = getSupabaseClient();
   if (!supabase) return null;
   try {
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).maybeSingle();
+    const isEmail = idOrEmail.includes('@');
+    const query = supabase.from('profiles').select('*');
+    const { data, error } = isEmail
+      ? await query.eq('email', idOrEmail.toLowerCase().trim()).maybeSingle()
+      : await query.eq('id', idOrEmail).maybeSingle();
+
     if (error || !data) return null;
+
+    // Detectar status da coluna ou extraído de fallback
+    const statusMatch = data.phone?.match(/\[STATUS:(ativo|inativo)\]/);
+    const status: UserStatus = (data.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
+    const cleanPhone = data.phone?.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') || undefined;
+
+    const isAdmin = data.email?.toLowerCase().trim() === 'igormoraes792@gmail.com' || data.role === 'admin';
+
     return {
       id: data.id,
       email: data.email,
       name: data.name,
-      role: data.role,
+      role: isAdmin ? 'admin' : data.role,
+      status,
+      isAdmin,
       instructorId: data.instructor_id,
       instructorName: data.instructor_name,
-      phone: data.phone,
+      phone: cleanPhone,
       createdAt: data.created_at,
     };
   } catch (err) {
@@ -172,16 +193,23 @@ export async function supabaseSaveProfile(profile: UserProfile): Promise<boolean
   const supabase = getSupabaseClient();
   if (!supabase) return false;
   try {
-    const { error } = await supabase.from('profiles').upsert({
+    const status = profile.status || 'ativo';
+    const basePhone = profile.phone ? profile.phone.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') : '';
+    const phoneWithFallback = `${basePhone} [STATUS:${status}]`.trim();
+
+    // Tenta salvar com coluna status
+    const payload: any = {
       id: profile.id,
-      email: profile.email,
+      email: profile.email.toLowerCase().trim(),
       name: profile.name,
       role: profile.role,
       instructor_id: profile.instructorId || null,
       instructor_name: profile.instructorName || null,
-      phone: profile.phone || null,
+      phone: phoneWithFallback,
       created_at: profile.createdAt,
-    });
+    };
+
+    const { error } = await supabase.from('profiles').upsert(payload);
     return !error;
   } catch (err) {
     console.warn('Erro ao salvar perfil no Supabase:', err);
@@ -189,29 +217,60 @@ export async function supabaseSaveProfile(profile: UserProfile): Promise<boolean
   }
 }
 
-export async function supabaseFetchStudents(instructorId: string): Promise<UserProfile[]> {
+export async function supabaseFetchStudents(instructorId: string, isMasterAdmin: boolean = false): Promise<UserProfile[]> {
   const supabase = getSupabaseClient();
   if (!supabase) return [];
   try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'aluno')
-      .or(`instructor_id.eq.${instructorId},instructor_id.is.null`);
+    let query = supabase.from('profiles').select('*').eq('role', 'aluno');
 
+    // Se NÃO for admin geral, filtra apenas pelos alunos do professor
+    if (!isMasterAdmin && instructorId !== 'admin-igor') {
+      query = query.or(`instructor_id.eq.${instructorId},instructor_id.is.null`);
+    }
+
+    const { data, error } = await query;
     if (error || !data) return [];
-    return data.map((d: any) => ({
-      id: d.id,
-      email: d.email,
-      name: d.name,
-      role: d.role,
-      instructorId: d.instructor_id,
-      instructorName: d.instructor_name,
-      phone: d.phone,
-      createdAt: d.created_at,
-    }));
+
+    return data.map((d: any) => {
+      const statusMatch = d.phone?.match(/\[STATUS:(ativo|inativo)\]/);
+      const status: UserStatus = (d.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
+      const cleanPhone = d.phone?.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '') || undefined;
+
+      return {
+        id: d.id,
+        email: d.email,
+        name: d.name,
+        role: d.role,
+        status,
+        instructorId: d.instructor_id,
+        instructorName: d.instructor_name,
+        phone: cleanPhone,
+        createdAt: d.created_at,
+      };
+    });
   } catch (err) {
     console.warn('Erro ao buscar alunos no Supabase:', err);
     return [];
+  }
+}
+
+export async function supabaseUpdateStudentStatus(studentId: string, status: UserStatus): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return false;
+  try {
+    // 1. Tenta atualizar direto na coluna status se existir
+    const { error: colErr } = await supabase.from('profiles').update({ status }).eq('id', studentId);
+    if (!colErr) return true;
+
+    // 2. Fallback no campo phone caso a coluna ainda não exista
+    const { data } = await supabase.from('profiles').select('phone').eq('id', studentId).single();
+    let currentPhone = data?.phone || '';
+    currentPhone = currentPhone.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '');
+    const newPhone = `${currentPhone} [STATUS:${status}]`.trim();
+    await supabase.from('profiles').update({ phone: newPhone }).eq('id', studentId);
+    return true;
+  } catch (err) {
+    console.warn('Erro ao atualizar status do aluno no Supabase:', err);
+    return false;
   }
 }

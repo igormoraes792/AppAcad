@@ -11,11 +11,30 @@ import {
   Sparkles,
   Database,
   ArrowLeft,
+  UserPlus,
+  Share2,
+  Copy,
+  Check,
+  Ban,
+  UserCheck,
+  AlertCircle,
+  Phone,
+  ShieldCheck,
+  CheckCircle2,
 } from 'lucide-react';
-import type { UserProfile, WorkoutPlan, ExerciseTemplate, WorkoutLog, WeightEntry } from '../types';
+import type {
+  UserProfile,
+  WorkoutPlan,
+  ExerciseTemplate,
+  WorkoutLog,
+  WeightEntry,
+  UserStatus,
+} from '../types';
+import { isUserAdmin } from '../types';
 import {
   getStudentsForInstructor,
-  createStudentByInstructor,
+  inviteStudent,
+  setStudentActiveStatus,
   logoutUser,
 } from '../lib/auth';
 import {
@@ -41,8 +60,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   onOpenSettings,
   onSimulateStudent,
 }) => {
+  const isMaster = isUserAdmin(currentUser);
+
   const [students, setStudents] = useState<UserProfile[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'ativos' | 'inativos'>('todos');
   const [selectedStudent, setSelectedStudent] = useState<UserProfile | null>(null);
 
   // Dados do aluno selecionado
@@ -51,15 +73,28 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const [studentWeights, setStudentWeights] = useState<WeightEntry[]>([]);
 
   // Modais
-  const [showNewStudentModal, setShowNewStudentModal] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
   const [showNewExerciseModal, setShowNewExerciseModal] = useState<string | null>(null);
 
-  // Forms
-  const [newStudentName, setNewStudentName] = useState('');
-  const [newStudentEmail, setNewStudentEmail] = useState('');
-  const [newStudentPhone, setNewStudentPhone] = useState('');
+  // Formulário de Convite de Aluno
+  const [inviteName, setInviteName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [isInviting, setIsInviting] = useState(false);
+  const [inviteResult, setInviteResult] = useState<{
+    student: UserProfile;
+    emailSent: boolean;
+    whatsappUrl: string;
+    shareLink: string;
+    error?: string;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
+  // Status de ativação/desativação
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+
+  // Formulários de Treino e Exercício
   const [newPlanCategory, setNewPlanCategory] = useState('Treino A');
   const [newPlanName, setNewPlanName] = useState('');
   const [newPlanDesc, setNewPlanDesc] = useState('');
@@ -72,8 +107,13 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   const [exWeight, setExWeight] = useState(20);
 
   const loadStudents = async () => {
-    const list = await getStudentsForInstructor(currentUser.id);
+    const list = await getStudentsForInstructor(currentUser.id, isMaster);
     setStudents(list);
+    // Se há um aluno em foco, atualiza seus dados
+    if (selectedStudent) {
+      const updated = list.find((s) => s.id === selectedStudent.id);
+      if (updated) setSelectedStudent(updated);
+    }
   };
 
   useEffect(() => {
@@ -91,23 +131,69 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     setStudentWeights(getWeightsForStudent(studentId));
   };
 
-  const handleCreateStudent = async (e: React.FormEvent) => {
+  // Envia convite de acesso para o aluno
+  const handleInviteStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newStudentName.trim() || !newStudentEmail.trim()) return;
+    if (!inviteName.trim() || !inviteEmail.trim()) return;
 
-    const created = await createStudentByInstructor(
-      currentUser,
-      newStudentName,
-      newStudentEmail,
-      newStudentPhone
-    );
+    setIsInviting(true);
+    try {
+      const res = await inviteStudent(
+        currentUser,
+        inviteName.trim(),
+        inviteEmail.trim(),
+        invitePhone.trim()
+      );
 
-    await loadStudents();
-    setShowNewStudentModal(false);
-    setNewStudentName('');
-    setNewStudentEmail('');
-    setNewStudentPhone('');
-    selectStudent(created);
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const cleanPhone = invitePhone.replace(/\D/g, '');
+      const greetingMsg = encodeURIComponent(
+        `Olá ${inviteName.trim()}! Seu personal ${currentUser.name} convidou você para o FitTrack PRO. Acesse o aplicativo e crie sua senha de primeiro acesso no link: ${origin}`
+      );
+      const whatsappUrl = cleanPhone
+        ? `https://wa.me/55${cleanPhone}?text=${greetingMsg}`
+        : `https://wa.me/?text=${greetingMsg}`;
+
+      setInviteResult({
+        student: res.student,
+        emailSent: res.emailSent,
+        whatsappUrl,
+        shareLink: origin,
+        error: res.error,
+      });
+
+      await loadStudents();
+    } catch (err: any) {
+      alert('Erro ao convidar aluno: ' + (err?.message || 'Tente novamente'));
+    } finally {
+      setIsInviting(false);
+    }
+  };
+
+  // Ativa ou desativa a conta do aluno selecionado
+  const handleToggleStudentStatus = async () => {
+    if (!selectedStudent || isUpdatingStatus) return;
+    const currentStatus = selectedStudent.status || 'ativo';
+    const newStatus: UserStatus = currentStatus === 'ativo' ? 'inativo' : 'ativo';
+
+    const confirmMsg =
+      newStatus === 'inativo'
+        ? `Deseja realmente desativar o aluno ${selectedStudent.name}? Ele ficará impedido de fazer login no aplicativo até ser reativado.`
+        : `Deseja reativar o acesso de ${selectedStudent.name}? O aluno voltará a conseguir acessar seus treinos normalmente.`;
+
+    if (!confirm(confirmMsg)) return;
+
+    setIsUpdatingStatus(true);
+    try {
+      await setStudentActiveStatus(selectedStudent.id, newStatus);
+      const updated = { ...selectedStudent, status: newStatus };
+      setSelectedStudent(updated);
+      await loadStudents();
+    } catch (err: any) {
+      alert('Erro ao alterar status do aluno: ' + (err?.message || 'Erro desconhecido'));
+    } finally {
+      setIsUpdatingStatus(false);
+    }
   };
 
   const handleCreatePlan = async (e: React.FormEvent) => {
@@ -179,40 +265,66 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     }
   };
 
-  const filteredStudents = students.filter(
-    (s) =>
+  const activeCount = students.filter((s) => (s.status || 'ativo') === 'ativo').length;
+  const inactiveCount = students.filter((s) => s.status === 'inativo').length;
+
+  const filteredStudents = students.filter((s) => {
+    const matchesSearch =
       s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+      s.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const status = s.status || 'ativo';
+
+    if (statusFilter === 'ativos') return matchesSearch && status === 'ativo';
+    if (statusFilter === 'inativos') return matchesSearch && status === 'inativo';
+    return matchesSearch;
+  });
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
-      {/* Top Header do Professor */}
+      {/* Top Header do Professor / Admin */}
       <header className="sticky top-0 z-40 bg-zinc-950/85 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-safe pb-2">
         <div className="flex items-center justify-between h-14 max-w-lg mx-auto">
           <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center text-white shadow-md shadow-purple-600/20">
-              <Users className="w-5 h-5" />
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-md ${
+                isMaster
+                  ? 'bg-gradient-to-tr from-amber-500 to-amber-600 shadow-amber-500/20'
+                  : 'bg-purple-600 shadow-purple-600/20'
+              }`}
+            >
+              {isMaster ? <ShieldCheck className="w-5 h-5" /> : <Users className="w-5 h-5" />}
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <h1 className="text-sm font-bold text-white">{currentUser.name}</h1>
-                <span className="text-[10px] font-bold bg-purple-500/20 text-purple-300 px-1.5 py-0.2 rounded border border-purple-500/30">
-                  PERSONAL
-                </span>
+                {isMaster ? (
+                  <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">
+                    ADMIN MASTER
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30">
+                    PERSONAL
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-zinc-400">Painel do Professor</p>
+              <p className="text-[11px] text-zinc-400">
+                {isMaster ? 'Painel de Administração Global' : 'Painel do Professor'}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-1.5">
-            <button
-              onClick={onOpenSettings}
-              className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white transition"
-              title="Configurações do Banco Supabase"
-            >
-              <Database className="w-4 h-4" />
-            </button>
+            {/* O botão do Banco Supabase é exclusivo do Admin Master (igormoraes792@gmail.com) */}
+            {isMaster && (
+              <button
+                onClick={onOpenSettings}
+                className="p-2 rounded-xl bg-amber-950/30 border border-amber-500/40 text-amber-400 hover:text-white transition"
+                title="Configurações do Banco Supabase (Exclusivo Master Admin)"
+              >
+                <Database className="w-4 h-4" />
+              </button>
+            )}
+
             <button
               onClick={() => {
                 logoutUser();
@@ -251,16 +363,70 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               </button>
             </div>
 
-            {/* Cartão do Aluno */}
-            <div className="bg-gradient-to-br from-zinc-900 to-zinc-900/90 border border-zinc-800 rounded-3xl p-4 shadow-lg">
-              <div className="flex items-center space-x-3 mb-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 text-lg font-bold">
-                  {selectedStudent.name.charAt(0)}
+            {/* Cartão do Aluno com Status de Ativação */}
+            <div className="bg-gradient-to-br from-zinc-900 to-zinc-900/90 border border-zinc-800 rounded-3xl p-4 shadow-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 text-lg font-bold">
+                    {selectedStudent.name.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-white">{selectedStudent.name}</h2>
+                      {selectedStudent.status === 'inativo' ? (
+                        <span className="text-[10px] font-bold bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full border border-rose-500/30">
+                          INATIVO
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          ATIVO
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-400">{selectedStudent.email}</p>
+                    {selectedStudent.phone && (
+                      <p className="text-[11px] text-zinc-500 flex items-center gap-1 mt-0.5">
+                        <Phone className="w-3 h-3 text-zinc-400" />
+                        <span>{selectedStudent.phone}</span>
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <h2 className="text-base font-bold text-white">{selectedStudent.name}</h2>
-                  <p className="text-xs text-zinc-400">{selectedStudent.email}</p>
-                </div>
+              </div>
+
+              {/* Botão de Desativar ou Reativar Conta */}
+              <div className="pt-2 border-t border-zinc-800/80">
+                {selectedStudent.status === 'inativo' ? (
+                  <div className="bg-rose-950/30 border border-rose-500/30 rounded-2xl p-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold text-rose-300">Conta Desativada</p>
+                        <p className="text-[10px] text-zinc-400">O aluno não consegue fazer login.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleToggleStudentStatus}
+                      disabled={isUpdatingStatus}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1 shadow-md transition disabled:opacity-50"
+                    >
+                      <UserCheck className="w-3.5 h-3.5" />
+                      <span>{isUpdatingStatus ? 'Reativando...' : 'Reativar'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-zinc-400">Acesso do aluno liberado</span>
+                    <button
+                      onClick={handleToggleStudentStatus}
+                      disabled={isUpdatingStatus}
+                      className="px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-rose-900/30 border border-zinc-700/60 hover:border-rose-500/40 text-zinc-400 hover:text-rose-300 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      <span>{isUpdatingStatus ? 'Atualizando...' : 'Desativar Aluno'}</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-800/80">
@@ -392,21 +558,67 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         ) : (
           /* VISÃO 2: LISTAGEM GERAL DE ALUNOS */
           <div className="space-y-4">
-            {/* Banner de estatística rápida */}
+            {/* Banner com botão Convidar Aluno */}
             <div className="bg-gradient-to-br from-purple-950/60 to-zinc-900 border border-purple-500/20 rounded-3xl p-4 shadow-lg flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-purple-400 uppercase tracking-wider">
                   Alunos Cadastrados
                 </span>
-                <h2 className="text-2xl font-black text-white">{students.length}</h2>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <h2 className="text-2xl font-black text-white">{students.length}</h2>
+                  <span className="text-xs text-zinc-400">
+                    ({activeCount} ativos{inactiveCount > 0 ? `, ${inactiveCount} inativos` : ''})
+                  </span>
+                </div>
                 <p className="text-[11px] text-zinc-400">Gerencie treinos individuais e evolução</p>
               </div>
+
               <button
-                onClick={() => setShowNewStudentModal(true)}
-                className="py-2.5 px-3.5 bg-purple-600 hover:bg-purple-500 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 shadow-lg shadow-purple-600/30 active:scale-95 transition"
+                onClick={() => {
+                  setInviteResult(null);
+                  setInviteName('');
+                  setInviteEmail('');
+                  setInvitePhone('');
+                  setShowInviteModal(true);
+                }}
+                className="py-2.5 px-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-bold flex items-center space-x-1.5 shadow-lg shadow-purple-600/30 active:scale-95 transition"
               >
-                <Plus className="w-4 h-4" />
-                <span>Novo Aluno</span>
+                <UserPlus className="w-4 h-4" />
+                <span>Convidar Aluno</span>
+              </button>
+            </div>
+
+            {/* Filtros de Status (Todos / Ativos / Inativos) */}
+            <div className="flex items-center gap-1.5 bg-zinc-900/80 p-1 rounded-2xl border border-zinc-800">
+              <button
+                onClick={() => setStatusFilter('todos')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition ${
+                  statusFilter === 'todos'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Todos ({students.length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('ativos')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition ${
+                  statusFilter === 'ativos'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Ativos ({activeCount})
+              </button>
+              <button
+                onClick={() => setStatusFilter('inativos')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition ${
+                  statusFilter === 'inativos'
+                    ? 'bg-rose-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                Inativos ({inactiveCount})
               </button>
             </div>
 
@@ -426,25 +638,47 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
             <div className="space-y-2.5">
               {filteredStudents.length === 0 ? (
                 <div className="p-6 text-center rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs">
-                  Nenhum aluno encontrado.
+                  Nenhum aluno encontrado neste filtro.
                 </div>
               ) : (
                 filteredStudents.map((student) => {
                   const plans = getPlansForStudent(student.id);
                   const weights = getWeightsForStudent(student.id);
+                  const isInactive = student.status === 'inativo';
 
                   return (
                     <div
                       key={student.id}
                       onClick={() => selectStudent(student)}
-                      className="bg-zinc-900 border border-zinc-800 hover:border-purple-500/50 rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition active:scale-99 shadow-sm"
+                      className={`border rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition active:scale-99 shadow-sm ${
+                        isInactive
+                          ? 'bg-zinc-900/60 border-zinc-800/60 opacity-75 hover:opacity-100 hover:border-zinc-700'
+                          : 'bg-zinc-900 border-zinc-800 hover:border-purple-500/50'
+                      }`}
                     >
                       <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-sm">
+                        <div
+                          className={`w-10 h-10 rounded-xl border flex items-center justify-center font-bold text-sm ${
+                            isInactive
+                              ? 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                              : 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                          }`}
+                        >
                           {student.name.charAt(0)}
                         </div>
                         <div>
-                          <h4 className="text-xs font-bold text-white">{student.name}</h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-xs font-bold text-white">{student.name}</h4>
+                            {isInactive ? (
+                              <span className="text-[9px] font-bold bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded border border-rose-500/30">
+                                Inativo
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-bold bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/30">
+                                Ativo
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-zinc-400">{student.email}</p>
                           <div className="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-500">
                             <span>{plans.length} fichas de treino</span>
@@ -470,63 +704,135 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
         )}
       </main>
 
-      {/* MODAL: NOVO ALUNO */}
-      {showNewStudentModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
+      {/* MODAL: CONVIDAR ALUNO (E-MAIL + WHATSAPP) */}
+      {showInviteModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <h3 className="text-base font-bold text-white">Cadastrar Novo Aluno</h3>
+              <div className="flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Convidar Novo Aluno</h3>
+              </div>
               <button
-                onClick={() => setShowNewStudentModal(false)}
-                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400"
+                onClick={() => setShowInviteModal(false)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateStudent} className="space-y-3 pt-3">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome do Aluno</label>
-                <input
-                  type="text"
-                  placeholder="Ex: Carlos Eduardo"
-                  value={newStudentName}
-                  onChange={(e) => setNewStudentName(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
-                  required
-                />
-              </div>
+            {inviteResult ? (
+              /* TELA DE SUCESSO DO CONVITE */
+              <div className="space-y-4 pt-4 text-center">
+                <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">E-mail do Aluno</label>
-                <input
-                  type="email"
-                  placeholder="carlos@exemplo.com"
-                  value={newStudentEmail}
-                  onChange={(e) => setNewStudentEmail(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
-                  required
-                />
-              </div>
+                <div>
+                  <h4 className="text-base font-bold text-white">Aluno Convidado com Sucesso!</h4>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    {inviteResult.emailSent ? (
+                      <>
+                        Um e-mail foi enviado para <span className="text-white font-semibold">{inviteResult.student.email}</span>{' '}
+                        para que o aluno crie sua primeira senha.
+                      </>
+                    ) : (
+                      <>
+                        O perfil de <span className="text-white font-semibold">{inviteResult.student.name}</span> foi criado.{' '}
+                        Envie o link abaixo para que ele defina sua senha no primeiro acesso.
+                      </>
+                    )}
+                  </p>
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-1">Telefone / WhatsApp (opcional)</label>
-                <input
-                  type="text"
-                  placeholder="(11) 99999-9999"
-                  value={newStudentPhone}
-                  onChange={(e) => setNewStudentPhone(e.target.value)}
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
-                />
-              </div>
+                <div className="space-y-2 pt-2">
+                  {/* Botão de WhatsApp */}
+                  <a
+                    href={inviteResult.whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition active:scale-98"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Enviar Acesso via WhatsApp</span>
+                  </a>
 
-              <button
-                type="submit"
-                className="w-full mt-2 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl shadow-lg shadow-purple-600/30 text-xs"
-              >
-                Cadastrar Aluno
-              </button>
-            </form>
+                  {/* Botão Copiar Link */}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(inviteResult.shareLink);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2000);
+                    }}
+                    className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition"
+                  >
+                    {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link do Aplicativo'}</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setShowInviteModal(false);
+                    selectStudent(inviteResult.student);
+                  }}
+                  className="w-full py-2 text-center text-xs font-semibold text-purple-400 hover:text-purple-300 transition"
+                >
+                  Montar Treino do Aluno Agora →
+                </button>
+              </div>
+            ) : (
+              /* FORMULÁRIO DE CONVITE */
+              <form onSubmit={handleInviteStudent} className="space-y-3 pt-3">
+                <p className="text-xs text-zinc-400">
+                  Cadastre o aluno e ele receberá um link para definir sua senha no primeiro acesso ao FitTrack PRO.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome Completo</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Carlos Eduardo Silva"
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">E-mail do Aluno</label>
+                  <input
+                    type="email"
+                    placeholder="carlos@exemplo.com"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">WhatsApp / Telefone (opcional)</label>
+                  <input
+                    type="tel"
+                    placeholder="(11) 99999-9999"
+                    value={invitePhone}
+                    onChange={(e) => setInvitePhone(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isInviting}
+                  className="w-full mt-2 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg shadow-purple-600/30 text-xs flex items-center justify-center gap-2 active:scale-98 transition disabled:opacity-50"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{isInviting ? 'Enviando Convite...' : 'Enviar Convite e Criar Acesso'}</span>
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

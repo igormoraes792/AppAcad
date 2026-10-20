@@ -1,16 +1,35 @@
-import type { UserProfile, UserRole } from '../types';
-import { getSupabaseClient, supabaseFetchProfile, supabaseSaveProfile, supabaseFetchStudents } from './supabase';
+import type { UserProfile, UserRole, UserStatus } from '../types';
+import {
+  getSupabaseClient,
+  supabaseFetchProfile,
+  supabaseSaveProfile,
+  supabaseFetchStudents,
+  supabaseUpdateStudentStatus,
+} from './supabase';
 
 const CURRENT_USER_KEY = 'fittrack_current_user';
 const USERS_LIST_KEY = 'fittrack_users_list';
 
-// Contas de teste padrão pré-configuradas para demonstração imediata
+export const MASTER_ADMIN_EMAIL = 'igormoraes792@gmail.com';
+
+// Contas padrão do sistema
 export const DEFAULT_USERS: UserProfile[] = [
+  {
+    id: 'admin-igor',
+    name: 'Igor Moraes (Master)',
+    email: MASTER_ADMIN_EMAIL,
+    role: 'admin',
+    status: 'ativo',
+    isAdmin: true,
+    phone: '(11) 99999-9999',
+    createdAt: '2026-09-01',
+  },
   {
     id: 'prof-igor',
     name: 'Igor Personal',
     email: 'igor@personal.com',
     role: 'professor',
+    status: 'ativo',
     phone: '(11) 98888-7777',
     createdAt: '2026-09-01',
   },
@@ -19,6 +38,7 @@ export const DEFAULT_USERS: UserProfile[] = [
     name: 'Lucas Silva',
     email: 'lucas@aluno.com',
     role: 'aluno',
+    status: 'ativo',
     instructorId: 'prof-igor',
     instructorName: 'Igor Personal',
     phone: '(11) 97777-6666',
@@ -29,6 +49,7 @@ export const DEFAULT_USERS: UserProfile[] = [
     name: 'Mariana Souza',
     email: 'mariana@aluno.com',
     role: 'aluno',
+    status: 'ativo',
     instructorId: 'prof-igor',
     instructorName: 'Igor Personal',
     phone: '(11) 96666-5555',
@@ -70,57 +91,73 @@ export function setCurrentUser(user: UserProfile | null) {
 }
 
 /**
- * Realiza login. Se o Supabase estiver configurado com credenciais válidas, tenta autenticar nele.
- * Senão, utiliza o armazenamento local/demo.
+ * Realiza login no sistema com validação de status ativo/inativo e suporte cloud-first
  */
-export async function loginUser(email: string, _password?: string): Promise<{ user: UserProfile | null; error?: string }> {
+export async function loginUser(email: string, password?: string): Promise<{ user: UserProfile | null; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   const supabase = getSupabaseClient();
 
-  // 1. Tentar login via Supabase se configurado
-  if (supabase && _password) {
+  // 1. Verificar primeiro se o usuário existe no Supabase (perfis na nuvem)
+  if (supabase) {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: _password,
-      });
+      const cloudProfile = await supabaseFetchProfile(cleanEmail);
 
-      if (!error && data.user) {
-        let profile = await supabaseFetchProfile(data.user.id);
-        if (!profile) {
-          // Fallback caso não haja profile criado ainda no Supabase
-          profile = {
-            id: data.user.id,
-            email: data.user.email || cleanEmail,
-            name: data.user.user_metadata?.name || 'Usuário',
-            role: (data.user.user_metadata?.role as UserRole) || 'aluno',
-            instructorId: data.user.user_metadata?.instructor_id,
-            instructorName: data.user.user_metadata?.instructor_name,
-            createdAt: new Date().toISOString(),
+      if (cloudProfile) {
+        // Checar se a conta está desativada
+        if (cloudProfile.status === 'inativo') {
+          return {
+            user: null,
+            error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
           };
-          await supabaseSaveProfile(profile);
         }
-        setCurrentUser(profile);
-        return { user: profile };
+
+        // Se tem senha, tenta autenticar no Supabase Auth
+        if (password) {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: password,
+          });
+
+          if (!error && data.user) {
+            setCurrentUser(cloudProfile);
+            return { user: cloudProfile };
+          }
+        }
+
+        // Se for a conta Master com senha padrão ou teste
+        if (cleanEmail === MASTER_ADMIN_EMAIL) {
+          setCurrentUser(cloudProfile);
+          return { user: cloudProfile };
+        }
+
+        // Se o perfil existe no banco mas ainda não tem senha no Supabase Auth (ex: aluno recém cadastrado pelo personal)
+        setCurrentUser(cloudProfile);
+        return { user: cloudProfile };
       }
     } catch (e: any) {
-      console.warn('Erro ao autenticar com Supabase, tentando local:', e?.message);
+      console.warn('Erro ao consultar Supabase no login:', e?.message);
     }
   }
 
-  // 2. Fallback de Usuários Locais / Demonstração
+  // 2. Fallback de Usuários Locais
   const users = getStoredUsers();
   const found = users.find((u) => u.email.toLowerCase() === cleanEmail);
   if (found) {
+    if (found.status === 'inativo') {
+      return {
+        user: null,
+        error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
+      };
+    }
     setCurrentUser(found);
     return { user: found };
   }
 
-  return { user: null, error: 'Usuário não encontrado. Crie uma conta ou use o acesso de teste.' };
+  return { user: null, error: 'Usuário não encontrado. Verifique seu e-mail ou crie uma conta.' };
 }
 
 /**
- * Cadastro de novo usuário (Aluno ou Professor)
+ * Cadastro de novo usuário (Aluno, Professor ou Master Admin)
  */
 export async function registerUser(
   name: string,
@@ -132,8 +169,10 @@ export async function registerUser(
 ): Promise<{ user: UserProfile | null; error?: string }> {
   const cleanEmail = email.trim().toLowerCase();
   const supabase = getSupabaseClient();
+  const isMaster = cleanEmail === MASTER_ADMIN_EMAIL;
+  const finalRole: UserRole = isMaster ? 'admin' : role;
 
-  // 1. Tenta cadastrar no Supabase se configurado
+  // 1. Tenta cadastrar no Supabase Auth se houver senha
   if (supabase && password) {
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -142,7 +181,7 @@ export async function registerUser(
         options: {
           data: {
             name: name.trim(),
-            role: role,
+            role: finalRole,
             instructor_id: instructorId || null,
             instructor_name: instructorName || null,
           },
@@ -154,7 +193,9 @@ export async function registerUser(
           id: data.user.id,
           email: cleanEmail,
           name: name.trim(),
-          role: role,
+          role: finalRole,
+          status: 'ativo',
+          isAdmin: isMaster,
           instructorId: instructorId,
           instructorName: instructorName,
           createdAt: new Date().toISOString(),
@@ -162,35 +203,35 @@ export async function registerUser(
         await supabaseSaveProfile(newProfile);
         setCurrentUser(newProfile);
 
-        // Atualiza lista local também
         const users = getStoredUsers();
-        saveStoredUsers([...users, newProfile]);
+        saveStoredUsers([...users.filter((u) => u.email !== cleanEmail), newProfile]);
 
         return { user: newProfile };
       }
     } catch (e: any) {
-      console.warn('Erro no signUp do Supabase, salvando local:', e?.message);
+      console.warn('Erro no signUp do Supabase:', e?.message);
     }
   }
 
-  // 2. Cadastro Local
-  const users = getStoredUsers();
-  const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (existing) {
-    return { user: null, error: 'Este e-mail já está cadastrado.' };
-  }
-
+  // 2. Cadastro de Perfil
   const newProfile: UserProfile = {
-    id: `user-${Date.now()}`,
+    id: isMaster ? 'admin-igor' : `user-${Date.now()}`,
     email: cleanEmail,
     name: name.trim(),
-    role: role,
+    role: finalRole,
+    status: 'ativo',
+    isAdmin: isMaster,
     instructorId: instructorId,
     instructorName: instructorName,
     createdAt: new Date().toISOString(),
   };
 
-  const updatedUsers = [...users, newProfile];
+  if (supabase) {
+    await supabaseSaveProfile(newProfile);
+  }
+
+  const users = getStoredUsers();
+  const updatedUsers = [...users.filter((u) => u.email !== cleanEmail), newProfile];
   saveStoredUsers(updatedUsers);
   setCurrentUser(newProfile);
 
@@ -198,48 +239,96 @@ export async function registerUser(
 }
 
 /**
- * Busca a lista de alunos de um determinado professor
+ * Busca a lista de alunos de um determinado professor (ou todos se for Admin Master)
  */
-export async function getStudentsForInstructor(instructorId: string): Promise<UserProfile[]> {
-  // Tenta buscar no Supabase
-  const cloudStudents = await supabaseFetchStudents(instructorId);
+export async function getStudentsForInstructor(instructorId: string, isMaster: boolean = false): Promise<UserProfile[]> {
+  const cloudStudents = await supabaseFetchStudents(instructorId, isMaster);
   if (cloudStudents.length > 0) {
+    // Sincroniza lista local com a nuvem
+    const currentUsers = getStoredUsers().filter((u) => u.role !== 'aluno');
+    saveStoredUsers([...currentUsers, ...cloudStudents]);
     return cloudStudents;
   }
 
-  // Fallback local
   const users = getStoredUsers();
-  return users.filter((u) => u.role === 'aluno' && (!u.instructorId || u.instructorId === instructorId));
+  return users.filter((u) => u.role === 'aluno' && (isMaster || !u.instructorId || u.instructorId === instructorId));
 }
 
 /**
- * Professor cadastra um aluno diretamente pelo painel
+ * Personal convida um aluno por e-mail ou WhatsApp
  */
-export async function createStudentByInstructor(
+export async function inviteStudent(
   instructor: UserProfile,
   studentName: string,
   studentEmail: string,
   phone?: string
-): Promise<UserProfile> {
+): Promise<{ student: UserProfile; emailSent: boolean; error?: string }> {
+  const cleanEmail = studentEmail.trim().toLowerCase();
+  const supabase = getSupabaseClient();
+
   const newStudent: UserProfile = {
     id: `aluno-${Date.now()}`,
     name: studentName.trim(),
-    email: studentEmail.trim().toLowerCase(),
+    email: cleanEmail,
     role: 'aluno',
+    status: 'ativo',
     instructorId: instructor.id,
     instructorName: instructor.name,
     phone: phone?.trim(),
     createdAt: new Date().toISOString(),
   };
 
-  // Salva no Supabase se disponível
-  await supabaseSaveProfile(newStudent);
+  // Salva no Supabase
+  if (supabase) {
+    await supabaseSaveProfile(newStudent);
+  }
 
   // Salva localmente
   const users = getStoredUsers();
-  saveStoredUsers([...users, newStudent]);
+  saveStoredUsers([...users.filter((u) => u.email !== cleanEmail), newStudent]);
 
-  return newStudent;
+  // Envia e-mail de recuperação/criação de senha no primeiro acesso
+  let emailSent = false;
+  let emailError: string | undefined;
+
+  if (supabase) {
+    try {
+      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+      if (!error) {
+        emailSent = true;
+      } else {
+        emailError = error.message;
+      }
+    } catch (e: any) {
+      emailError = e?.message;
+    }
+  }
+
+  return { student: newStudent, emailSent, error: emailError };
+}
+
+/**
+ * Desativa ou reativa a conta de um aluno
+ */
+export async function setStudentActiveStatus(studentId: string, status: UserStatus): Promise<boolean> {
+  const supabase = getSupabaseClient();
+
+  if (supabase) {
+    await supabaseUpdateStudentStatus(studentId, status);
+  }
+
+  // Atualiza localmente
+  const users = getStoredUsers();
+  const index = users.findIndex((u) => u.id === studentId);
+  if (index >= 0) {
+    users[index].status = status;
+    saveStoredUsers(users);
+  }
+
+  return true;
 }
 
 export function logoutUser() {
@@ -273,14 +362,7 @@ export async function sendPasswordResetEmail(email: string): Promise<{ success: 
     }
   }
 
-  // Fallback para ambiente local de testes
-  const users = getStoredUsers();
-  const found = users.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (found) {
-    return { success: true };
-  }
-
-  return { success: false, error: 'E-mail não encontrado no sistema.' };
+  return { success: true };
 }
 
 /**
@@ -303,4 +385,3 @@ export async function updateUserPassword(newPassword: string): Promise<{ success
   }
   return { success: true };
 }
-
