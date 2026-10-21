@@ -299,7 +299,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
     return (
       <div className="p-4 space-y-4 pb-[380px]">
         {/* Barra superior de status do treino ativo */}
-        <div className="bg-zinc-900/90 border border-indigo-500/30 rounded-2xl p-4 sticky top-14 z-20 backdrop-blur-lg shadow-lg flex items-center justify-between">
+        <div className="bg-zinc-900/95 border border-indigo-500/30 rounded-2xl p-4 backdrop-blur-lg shadow-lg flex items-center justify-between">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>

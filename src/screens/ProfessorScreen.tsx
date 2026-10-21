@@ -534,7 +534,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans select-none">
       {/* Top Header do Professor / Admin */}
-      <header className="sticky top-0 z-40 bg-zinc-950/85 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-safe pb-2">
+      <header className="sticky top-0 z-40 bg-zinc-950/95 backdrop-blur-md border-b border-zinc-800/80 px-4 pt-safe pb-2">
         <div className="flex items-center justify-between h-14 max-w-lg mx-auto">
           <div className="flex items-center space-x-2.5">
             <div

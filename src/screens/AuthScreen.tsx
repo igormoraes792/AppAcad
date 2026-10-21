@@ -87,7 +87,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-center px-4 py-8 max-w-md mx-auto">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-center px-4 pt-safe pb-safe max-w-md mx-auto">
       {/* Logo & Título */}
       <div className="text-center mb-6">
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center shadow-xl shadow-indigo-500/20 mx-auto mb-3">
