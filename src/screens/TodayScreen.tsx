@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   CheckCircle2,
@@ -55,6 +55,9 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
   const [restSeconds, setRestSeconds] = useState(60);
   const [workoutFinishedSummary, setWorkoutFinishedSummary] = useState<WorkoutLog | null>(null);
 
+  // Timestamp de início do treino para precisão mesmo com tela bloqueada ou app minimizado
+  const workoutStartTimeRef = useRef<number | null>(null);
+
   // Atualiza seleção se os planos mudarem
   useEffect(() => {
     if (plans.length > 0 && !plans.some((p) => p.id === selectedPlanId)) {
@@ -74,17 +77,42 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
     }
   }, [activePlanId, plans]);
 
-  // Cronômetro do treino ativo
+  // Cronômetro do treino ativo baseado em timestamp real (não para em segundo plano no iOS)
   useEffect(() => {
     let interval: any = null;
+
+    const updateElapsed = () => {
+      if (workoutStartTimeRef.current) {
+        const seconds = Math.floor((Date.now() - workoutStartTimeRef.current) / 1000);
+        setElapsedSeconds(seconds);
+      }
+    };
+
     if (isWorkoutActive) {
-      interval = setInterval(() => {
-        setElapsedSeconds((prev) => prev + 1);
-      }, 1000);
+      if (!workoutStartTimeRef.current) {
+        workoutStartTimeRef.current = Date.now() - (elapsedSeconds * 1000);
+      }
+      updateElapsed();
+      interval = setInterval(updateElapsed, 1000);
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          updateElapsed();
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', updateElapsed);
+
+      return () => {
+        clearInterval(interval);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', updateElapsed);
+      };
     } else {
+      workoutStartTimeRef.current = null;
       setElapsedSeconds(0);
     }
-    return () => clearInterval(interval);
   }, [isWorkoutActive]);
 
   const startWorkoutWithPlan = (plan: WorkoutPlan) => {
@@ -101,6 +129,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
       })),
     }));
 
+    workoutStartTimeRef.current = Date.now();
     setActiveExercises(initialExercises);
     setIsWorkoutActive(true);
     setElapsedSeconds(0);
@@ -415,17 +444,45 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
           ))}
         </div>
 
-        {/* Botão Finalizar Treino fixo na base */}
-        <div className="fixed bottom-16 left-4 right-4 z-20 max-w-md mx-auto flex items-center gap-2">
+        {/* Botão Concluir no final da lista de exercícios */}
+        <div className="pt-4 pb-28 flex items-center gap-3">
           <button
-            onClick={() => setIsWorkoutActive(false)}
-            className="py-3.5 px-4 bg-zinc-900/90 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-2xl text-xs backdrop-blur-md"
+            onClick={() => {
+              if (confirm('Deseja realmente cancelar o treino em andamento?')) {
+                setIsWorkoutActive(false);
+              }
+            }}
+            className="py-3.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-2xl text-xs transition"
+          >
+            Cancelar Treino
+          </button>
+          <button
+            onClick={handleFinishWorkout}
+            className="flex-1 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center space-x-2 text-sm transition"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>Concluir Treino</span>
+          </button>
+        </div>
+
+        {/* Barra flutuante de finalizar treino (posicionada acima da barra de navegação inferior) */}
+        <div
+          className="fixed left-4 right-4 z-40 max-w-md mx-auto flex items-center gap-2 p-2 rounded-2xl bg-zinc-950/90 backdrop-blur-xl border border-zinc-800/80 shadow-2xl"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 72px)' }}
+        >
+          <button
+            onClick={() => {
+              if (confirm('Deseja realmente cancelar o treino em andamento?')) {
+                setIsWorkoutActive(false);
+              }
+            }}
+            className="py-2.5 px-3 bg-zinc-900/90 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-xl text-xs backdrop-blur-md"
           >
             Cancelar
           </button>
           <button
             onClick={handleFinishWorkout}
-            className="flex-1 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center space-x-2 text-sm"
+            className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 text-xs"
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>Concluir Treino</span>

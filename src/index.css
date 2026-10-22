@@ -39,12 +39,13 @@
   }
   @media all and (display-mode: standalone) and (max-width: 768px) {
     .pt-safe {
-      padding-top: max(62px, calc(env(safe-area-inset-top, 0px) + 8px)) !important;
+      padding-top: max(64px, calc(env(safe-area-inset-top, 0px) + 8px)) !important;
     }
   }
+  .is-ios .pt-safe,
   .is-standalone-mobile .pt-safe,
   .is-ios-pwa .pt-safe {
-    padding-top: max(62px, calc(env(safe-area-inset-top, 0px) + 8px)) !important;
+    padding-top: max(64px, calc(env(safe-area-inset-top, 0px) + 8px)) !important;
   }
 
   .pb-safe {

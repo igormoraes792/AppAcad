@@ -123,7 +123,7 @@ export const WeightScreen: React.FC<WeightScreenProps> = ({
         </h3>
 
         <form onSubmit={handleAddWeight} className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Peso (kg)</label>
               <input
@@ -133,17 +133,17 @@ export const WeightScreen: React.FC<WeightScreenProps> = ({
                 placeholder="Ex: 79.5"
                 value={newWeight}
                 onChange={(e) => setNewWeight(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-sm text-white font-bold placeholder-zinc-600 outline-none"
+                className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-sm text-white font-bold placeholder-zinc-600 outline-none"
                 required
               />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Data</label>
+              <label className="block text-[11px] font-semibold text-zinc-400 mb-1">Data da Pesagem</label>
               <input
                 type="date"
                 value={newDate}
                 onChange={(e) => setNewDate(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2 text-sm text-white font-medium outline-none"
+                className="w-full min-w-0 bg-zinc-950 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3 py-2.5 text-sm text-white font-medium outline-none"
                 required
               />
             </div>

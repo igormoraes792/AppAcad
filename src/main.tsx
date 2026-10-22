@@ -9,6 +9,10 @@ if (typeof window !== 'undefined') {
     /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+  if (isIOS) {
+    document.documentElement.classList.add('is-ios');
+  }
+
   const isStandalone =
     window.matchMedia('(display-mode: standalone)').matches ||
     (window.navigator as any).standalone === true;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Timer, X, Plus, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface RestTimerProps {
@@ -13,8 +13,55 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
   const [isRunning, setIsRunning] = useState(true);
   const [isMinimized, setIsMinimized] = useState(false);
 
+  // Timestamp de término real para contar mesmo com tela bloqueada ou app minimizado
+  const endTimeRef = useRef<number>(Date.now() + initialSeconds * 1000);
+  const hasAlertedRef = useRef<boolean>(false);
+
+  // Som suave de alarme ao finalizar o descanso
+  const playFinishedChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime); // Nota Lá (A5)
+      osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.15); // Nota Ré (D6)
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const triggerCompletionAlert = () => {
+    if (hasAlertedRef.current) return;
+    hasAlertedRef.current = true;
+
+    // Vibração no celular
+    if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([200, 100, 200, 100, 300]);
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // Beep sonoro
+    playFinishedChime();
+  };
+
+  // Inicializa quando o modal abre ou initialSeconds muda
   useEffect(() => {
     if (isOpen) {
+      const targetTime = Date.now() + initialSeconds * 1000;
+      endTimeRef.current = targetTime;
+      hasAlertedRef.current = false;
       setTimeLeft(initialSeconds);
       setTotalTime(initialSeconds);
       setIsRunning(true);
@@ -22,27 +69,39 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
     }
   }, [isOpen, initialSeconds]);
 
+  // Loop de atualização baseado em relógio real (Date.now())
   useEffect(() => {
     if (!isOpen || !isRunning) return;
 
-    if (timeLeft <= 0) {
-      // Vibra o celular se disponível
-      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
-        try {
-          navigator.vibrate([200, 100, 200, 100, 300]);
-        } catch (e) {
-          // ignore
-        }
+    const checkTime = () => {
+      const remaining = Math.max(0, Math.ceil((endTimeRef.current - Date.now()) / 1000));
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        triggerCompletionAlert();
       }
-      return;
-    }
+    };
 
-    const interval = setInterval(() => {
-      setTimeLeft((prev) => prev - 1);
-    }, 1000);
+    // Executa imediatamente e a cada 500ms
+    checkTime();
+    const interval = setInterval(checkTime, 500);
 
-    return () => clearInterval(interval);
-  }, [isOpen, isRunning, timeLeft]);
+    // Eventos de retorno ao app (quando o iPhone é desbloqueado ou usuário volta da tela de bloqueio)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkTime();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', checkTime);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', checkTime);
+    };
+  }, [isOpen, isRunning]);
 
   if (!isOpen) return null;
 
@@ -51,11 +110,18 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
   const progressPercent = Math.max(0, Math.min(100, ((totalTime - timeLeft) / totalTime) * 100));
 
   const addTime = (secs: number) => {
-    setTimeLeft((prev) => prev + secs);
+    const newEnd = Math.max(Date.now(), endTimeRef.current) + secs * 1000;
+    endTimeRef.current = newEnd;
+    hasAlertedRef.current = false;
+    const remaining = Math.max(0, Math.ceil((newEnd - Date.now()) / 1000));
+    setTimeLeft(remaining);
     setTotalTime((prev) => prev + secs);
+    setIsRunning(true);
   };
 
   const restartTimer = (secs: number) => {
+    endTimeRef.current = Date.now() + secs * 1000;
+    hasAlertedRef.current = false;
     setTimeLeft(secs);
     setTotalTime(secs);
     setIsRunning(true);
@@ -64,15 +130,18 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
   // Versão minimizada (barra compacta que quase não ocupa espaço)
   if (isMinimized) {
     return (
-      <div className="fixed bottom-[124px] left-4 right-4 z-30 max-w-md mx-auto">
+      <div
+        className="fixed left-4 right-4 z-50 max-w-md mx-auto"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 128px)' }}
+      >
         <div className="bg-zinc-900/95 border border-indigo-500/50 shadow-2xl shadow-indigo-950/80 rounded-2xl px-3.5 py-2 backdrop-blur-xl flex items-center justify-between animate-in fade-in duration-200">
           <div
             onClick={() => setIsMinimized(false)}
             className="flex items-center space-x-2 cursor-pointer select-none"
           >
-            <Timer className="w-4 h-4 text-indigo-400 animate-pulse" />
-            <span className="font-mono text-base font-bold text-white">
-              {minutes}:{seconds < 10 ? `0${seconds}` : seconds}
+            <Timer className={`w-4 h-4 ${timeLeft > 0 ? 'text-indigo-400 animate-pulse' : 'text-emerald-400'}`} />
+            <span className={`font-mono text-base font-bold ${timeLeft === 0 ? 'text-emerald-400' : 'text-white'}`}>
+              {timeLeft === 0 ? '0:00 - Pronto!' : `${minutes}:${seconds < 10 ? `0${seconds}` : seconds}`}
             </span>
             <span className="text-[11px] text-indigo-300 font-medium">descansando</span>
           </div>
@@ -106,12 +175,17 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
 
   // Versão completa expandida
   return (
-    <div className="fixed bottom-[124px] left-4 right-4 z-30 max-w-md mx-auto">
+    <div
+      className="fixed left-4 right-4 z-50 max-w-md mx-auto"
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 128px)' }}
+    >
       <div className="bg-zinc-900/95 border border-indigo-500/40 shadow-2xl shadow-indigo-950/90 rounded-2xl p-4 backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center space-x-2">
-            <Timer className="w-4 h-4 text-indigo-400 animate-pulse" />
-            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Descanso entre séries</span>
+            <Timer className={`w-4 h-4 ${timeLeft > 0 ? 'text-indigo-400 animate-pulse' : 'text-emerald-400'}`} />
+            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-300">
+              {timeLeft === 0 ? 'Tempo Esgotado!' : 'Descanso entre séries'}
+            </span>
           </div>
 
           <div className="flex items-center space-x-1">
@@ -134,16 +208,20 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
 
         {/* Display tempo */}
         <div className="flex items-baseline justify-center space-x-1 py-1">
-          <span className="text-3xl font-extrabold tracking-tight font-mono text-white">
+          <span className={`text-3xl font-extrabold tracking-tight font-mono ${timeLeft === 0 ? 'text-emerald-400 animate-bounce' : 'text-white'}`}>
             {minutes}:{seconds < 10 ? `0${seconds}` : seconds}
           </span>
-          <span className="text-xs text-zinc-400 font-medium">restantes</span>
+          <span className="text-xs text-zinc-400 font-medium">
+            {timeLeft === 0 ? 'pronto para a próxima série!' : 'restantes'}
+          </span>
         </div>
 
         {/* Barra de progresso */}
         <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden my-2.5">
           <div
-            className="bg-gradient-to-r from-indigo-500 to-purple-500 h-full transition-all duration-1000"
+            className={`h-full transition-all duration-500 ${
+              timeLeft === 0 ? 'bg-emerald-500' : 'bg-gradient-to-r from-indigo-500 to-purple-500'
+            }`}
             style={{ width: `${progressPercent}%` }}
           />
         </div>
