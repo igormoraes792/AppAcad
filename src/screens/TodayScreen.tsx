@@ -53,6 +53,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [timerOpen, setTimerOpen] = useState(false);
   const [restSeconds, setRestSeconds] = useState(60);
+  const [timerTriggerKey, setTimerTriggerKey] = useState<number>(0);
   const [workoutFinishedSummary, setWorkoutFinishedSummary] = useState<WorkoutLog | null>(null);
 
   // Timestamp de início do treino para precisão mesmo com tela bloqueada ou app minimizado
@@ -149,7 +150,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
       const wasCompleted = targetSet.completed;
       targetSet.completed = !wasCompleted;
 
-      // Se acabou de completar, aciona vibração e abre timer de descanso
+      // Se acabou de completar, aciona vibração e abre/reinicia timer de descanso
       if (!wasCompleted) {
         if (typeof window !== 'undefined' && 'vibrate' in navigator) {
           try {
@@ -159,6 +160,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
           }
         }
         setRestSeconds(updated[exIndex].restSeconds || 60);
+        setTimerTriggerKey(Date.now());
         setTimerOpen(true);
       }
 
@@ -444,27 +446,6 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
           ))}
         </div>
 
-        {/* Botão Concluir no final da lista de exercícios */}
-        <div className="pt-4 pb-28 flex items-center gap-3">
-          <button
-            onClick={() => {
-              if (confirm('Deseja realmente cancelar o treino em andamento?')) {
-                setIsWorkoutActive(false);
-              }
-            }}
-            className="py-3.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-2xl text-xs transition"
-          >
-            Cancelar Treino
-          </button>
-          <button
-            onClick={handleFinishWorkout}
-            className="flex-1 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-2xl shadow-xl shadow-emerald-600/30 flex items-center justify-center space-x-2 text-sm transition"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Concluir Treino</span>
-          </button>
-        </div>
-
         {/* Barra flutuante de finalizar treino (posicionada acima da barra de navegação inferior) */}
         <div
           className="fixed left-4 right-4 z-40 max-w-md mx-auto flex items-center gap-2 p-2 rounded-2xl bg-zinc-950/90 backdrop-blur-xl border border-zinc-800/80 shadow-2xl"
@@ -476,13 +457,13 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
                 setIsWorkoutActive(false);
               }
             }}
-            className="py-2.5 px-3 bg-zinc-900/90 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-xl text-xs backdrop-blur-md"
+            className="py-2.5 px-3 bg-zinc-900/90 border border-zinc-800 text-zinc-400 hover:text-red-400 font-semibold rounded-xl text-xs backdrop-blur-md transition active:scale-95"
           >
             Cancelar
           </button>
           <button
             onClick={handleFinishWorkout}
-            className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 text-xs"
+            className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-98 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center space-x-2 text-xs transition"
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>Concluir Treino</span>
@@ -493,6 +474,7 @@ export const TodayScreen: React.FC<TodayScreenProps> = ({
         <RestTimer
           initialSeconds={restSeconds}
           isOpen={timerOpen}
+          resetTrigger={timerTriggerKey}
           onClose={() => setTimerOpen(false)}
         />
       </div>

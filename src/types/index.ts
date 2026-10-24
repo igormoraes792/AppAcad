@@ -1,6 +1,6 @@
 export type UserRole = 'aluno' | 'professor' | 'admin';
 
-export type UserStatus = 'ativo' | 'inativo';
+export type UserStatus = 'ativo' | 'inativo' | 'pendente';
 
 export interface UserProfile {
   id: string;

@@ -165,11 +165,11 @@ export async function supabaseFetchProfile(idOrEmail: string): Promise<UserProfi
     if (error || !data) return null;
 
     // Detectar status da coluna ou extraído de fallback
-    const statusMatch = data.phone?.match(/\[STATUS:(ativo|inativo)\]/);
+    const statusMatch = data.phone?.match(/\[STATUS:(ativo|inativo|pendente)\]/);
     const status: UserStatus = (data.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
     const resetMatch = data.phone?.match(/\[RESET:(true|false)\]/);
     const mustResetPassword = resetMatch ? resetMatch[1] === 'true' : false;
-    const cleanPhone = data.phone?.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '').trim() || undefined;
+    const cleanPhone = data.phone?.replace(/\s*\[(STATUS:(ativo|inativo|pendente)|RESET:(true|false))\]/g, '').trim() || undefined;
 
     const isAdmin = data.email?.toLowerCase().trim() === 'igormoraes792@gmail.com' || data.role === 'admin';
 
@@ -198,7 +198,7 @@ export async function supabaseSaveProfile(profile: UserProfile): Promise<boolean
   try {
     const status = profile.status || 'ativo';
     const resetTag = profile.mustResetPassword ? ' [RESET:true]' : '';
-    const basePhone = profile.phone ? profile.phone.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '') : '';
+    const basePhone = profile.phone ? profile.phone.replace(/\s*\[(STATUS:(ativo|inativo|pendente)|RESET:(true|false))\]/g, '') : '';
     const phoneWithFallback = `${basePhone} [STATUS:${status}]${resetTag}`.trim();
 
     // Tenta salvar com coluna status
@@ -236,11 +236,11 @@ export async function supabaseFetchStudents(instructorId: string, isMasterAdmin:
     if (error || !data) return [];
 
     return data.map((d: any) => {
-      const statusMatch = d.phone?.match(/\[STATUS:(ativo|inativo)\]/);
+      const statusMatch = d.phone?.match(/\[STATUS:(ativo|inativo|pendente)\]/);
       const status: UserStatus = (d.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
       const resetMatch = d.phone?.match(/\[RESET:(true|false)\]/);
       const mustResetPassword = resetMatch ? resetMatch[1] === 'true' : false;
-      const cleanPhone = d.phone?.replace(/\s*\[(STATUS:(ativo|inativo)|RESET:(true|false))\]/g, '').trim() || undefined;
+      const cleanPhone = d.phone?.replace(/\s*\[(STATUS:(ativo|inativo|pendente)|RESET:(true|false))\]/g, '').trim() || undefined;
 
       return {
         id: d.id,
@@ -272,12 +272,47 @@ export async function supabaseUpdateStudentStatus(studentId: string, status: Use
     // 2. Fallback no campo phone caso a coluna ainda não exista
     const { data } = await supabase.from('profiles').select('phone').eq('id', studentId).single();
     let currentPhone = data?.phone || '';
-    currentPhone = currentPhone.replace(/\s*\[STATUS:(ativo|inativo)\]/g, '');
+    currentPhone = currentPhone.replace(/\s*\[STATUS:(ativo|inativo|pendente)\]/g, '');
     const newPhone = `${currentPhone} [STATUS:${status}]`.trim();
     await supabase.from('profiles').update({ phone: newPhone }).eq('id', studentId);
     return true;
   } catch (err) {
-    console.warn('Erro ao atualizar status do aluno no Supabase:', err);
+    console.warn('Erro ao atualizar status do usuário no Supabase:', err);
     return false;
+  }
+}
+
+export async function supabaseFetchInstructors(): Promise<UserProfile[]> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase.from('profiles').select('*').in('role', ['professor', 'admin']);
+    if (error || !data) return [];
+
+    return data.map((d: any) => {
+      const statusMatch = d.phone?.match(/\[STATUS:(ativo|inativo|pendente)\]/);
+      const status: UserStatus = (d.status || (statusMatch ? statusMatch[1] : 'ativo')) as UserStatus;
+      const resetMatch = d.phone?.match(/\[RESET:(true|false)\]/);
+      const mustResetPassword = resetMatch ? resetMatch[1] === 'true' : false;
+      const cleanPhone = d.phone?.replace(/\s*\[(STATUS:(ativo|inativo|pendente)|RESET:(true|false))\]/g, '').trim() || undefined;
+      const isAdmin = d.email?.toLowerCase().trim() === 'igormoraes792@gmail.com' || d.role === 'admin';
+
+      return {
+        id: d.id,
+        email: d.email,
+        name: d.name,
+        role: isAdmin ? 'admin' : d.role,
+        status,
+        isAdmin,
+        mustResetPassword,
+        instructorId: d.instructor_id,
+        instructorName: d.instructor_name,
+        phone: cleanPhone,
+        createdAt: d.created_at,
+      };
+    });
+  } catch (err) {
+    console.warn('Erro ao buscar personais no Supabase:', err);
+    return [];
   }
 }

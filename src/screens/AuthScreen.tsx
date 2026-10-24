@@ -67,7 +67,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
           role === 'aluno' ? 'Igor Personal' : undefined
         );
         if (res.user) {
-          onLoginSuccess(res.user);
+          if (res.status === 'pendente') {
+            setAuthMode('login');
+            setPassword('');
+            setSuccessMsg(
+              role === 'professor'
+                ? 'Solicitação de Personal enviada com sucesso! Sua conta está aguardando aprovação do Administrador Master (Igor Moraes).'
+                : 'Cadastro realizado com sucesso! Aguarde a liberação (OK) do seu Personal Trainer para acessar seus treinos.'
+            );
+          } else {
+            onLoginSuccess(res.user);
+          }
         } else {
           setErrorMsg(res.error || 'Erro ao realizar cadastro.');
         }
@@ -253,6 +263,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                       <span>Sou Personal</span>
                     </button>
                   </div>
+
+                  {role === 'professor' ? (
+                    <p className="text-[11px] text-amber-300/90 bg-amber-950/40 border border-amber-500/30 rounded-xl p-2.5 leading-relaxed mt-2">
+                      ⚠️ <strong>Atenção Personal:</strong> Contas de Personal Trainer precisam de aprovação do Administrador Master (Igor Moraes) antes de acessar o painel.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-zinc-400 bg-zinc-950/60 border border-zinc-800 rounded-xl p-2.5 leading-relaxed mt-2">
+                      ℹ️ <strong>Novo Aluno:</strong> Seu acesso às fichas é liberado assim que seu Personal Trainer aprovar ou via link de convite.
+                    </p>
+                  )}
                 </div>
               )}
 

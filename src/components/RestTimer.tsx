@@ -5,9 +5,10 @@ interface RestTimerProps {
   initialSeconds?: number;
   isOpen: boolean;
   onClose: () => void;
+  resetTrigger?: number;
 }
 
-export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpen, onClose }) => {
+export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpen, onClose, resetTrigger }) => {
   const [timeLeft, setTimeLeft] = useState(initialSeconds);
   const [totalTime, setTotalTime] = useState(initialSeconds);
   const [isRunning, setIsRunning] = useState(true);
@@ -67,7 +68,7 @@ export const RestTimer: React.FC<RestTimerProps> = ({ initialSeconds = 60, isOpe
       setIsRunning(true);
       setIsMinimized(false);
     }
-  }, [isOpen, initialSeconds]);
+  }, [isOpen, initialSeconds, resetTrigger]);
 
   // Loop de atualização baseado em relógio real (Date.now())
   useEffect(() => {

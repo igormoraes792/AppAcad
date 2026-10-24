@@ -39,6 +39,8 @@ import { isUserAdmin } from '../types';
 import {
   getStudentsForInstructor,
   inviteStudent,
+  inviteInstructor,
+  getInstructorsList,
   resetStudentPasswordByInstructor,
   setStudentActiveStatus,
   logoutUser,
@@ -63,6 +65,7 @@ import {
   type PresetExercise,
 } from '../constants/presetExercises';
 import { SystemLogsModal } from '../components/SystemLogsModal';
+import { addSystemLog } from '../lib/logger';
 
 interface ProfessorScreenProps {
   currentUser: UserProfile;
@@ -85,8 +88,24 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
 
   const [students, setStudents] = useState<UserProfile[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'todos' | 'ativos' | 'inativos'>('todos');
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'ativos' | 'pendentes' | 'inativos'>('todos');
   const [selectedStudent, setSelectedStudent] = useState<UserProfile | null>(null);
+
+  // Gerenciamento de Personais (Exclusivo Master Admin)
+  const [instructors, setInstructors] = useState<UserProfile[]>([]);
+  const [showInstructorsModal, setShowInstructorsModal] = useState(false);
+  const [showInviteInstructorModal, setShowInviteInstructorModal] = useState(false);
+  const [newInstName, setNewInstName] = useState('');
+  const [newInstEmail, setNewInstEmail] = useState('');
+  const [newInstPhone, setNewInstPhone] = useState('');
+  const [invitedInstData, setInvitedInstData] = useState<{
+    instructor: UserProfile;
+    shareLink: string;
+    whatsappUrl: string;
+    emailSent: boolean;
+  } | null>(null);
+  const [isInvitingInst, setIsInvitingInst] = useState(false);
+  const [copiedInstLink, setCopiedInstLink] = useState(false);
 
   // Modelos de Treino (Templates Reutilizáveis)
   const [templates, setTemplates] = useState<WorkoutPlanTemplate[]>([]);
@@ -180,10 +199,80 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     setTemplates(list);
   };
 
+  const loadInstructors = async () => {
+    if (!isMaster) return;
+    const list = await getInstructorsList();
+    setInstructors(list);
+  };
+
   useEffect(() => {
     loadStudents();
     loadTemplates();
+    if (isMaster) {
+      loadInstructors();
+    }
   }, [currentUser]);
+
+  const handleApproveStudent = async (studentToApprove: UserProfile) => {
+    setIsUpdatingStatus(true);
+    try {
+      await setStudentActiveStatus(studentToApprove.id, 'ativo');
+      const updated = { ...studentToApprove, status: 'ativo' as UserStatus };
+      setStudents((prev) => prev.map((s) => (s.id === studentToApprove.id ? updated : s)));
+      if (selectedStudent?.id === studentToApprove.id) {
+        setSelectedStudent(updated);
+      }
+      addSystemLog('success', 'AUTH', `Acesso do aluno aprovado (OK): ${studentToApprove.name} (${studentToApprove.email})`);
+    } catch (err: any) {
+      alert('Erro ao aprovar aluno: ' + (err?.message || 'Erro desconhecido'));
+    } finally {
+      setIsUpdatingStatus(false);
+    }
+  };
+
+  const handleApproveInstructor = async (inst: UserProfile) => {
+    try {
+      await setStudentActiveStatus(inst.id, 'ativo');
+      setInstructors((prev) => prev.map((i) => (i.id === inst.id ? { ...i, status: 'ativo' as UserStatus } : i)));
+      addSystemLog('success', 'AUTH', `Personal aprovado pelo Master: ${inst.name} (${inst.email})`);
+    } catch (e: any) {
+      alert('Erro ao aprovar personal: ' + e?.message);
+    }
+  };
+
+  const handleToggleInstructorStatus = async (inst: UserProfile) => {
+    const currentStatus = inst.status || 'ativo';
+    const newStatus: UserStatus = currentStatus === 'ativo' ? 'inativo' : 'ativo';
+    if (!confirm(`Deseja realmente ${newStatus === 'inativo' ? 'desativar' : 'reativar'} o personal ${inst.name}?`)) return;
+    try {
+      await setStudentActiveStatus(inst.id, newStatus);
+      setInstructors((prev) => prev.map((i) => (i.id === inst.id ? { ...i, status: newStatus } : i)));
+      addSystemLog('warn', 'AUTH', `Status do personal ${inst.email} alterado para ${newStatus}`);
+    } catch (e: any) {
+      alert('Erro ao alterar status do personal: ' + e?.message);
+    }
+  };
+
+  const handleInviteInstructor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newInstName.trim() || !newInstEmail.trim()) {
+      alert('Nome e e-mail são obrigatórios.');
+      return;
+    }
+    setIsInvitingInst(true);
+    try {
+      const res = await inviteInstructor(newInstName, newInstEmail, newInstPhone);
+      setInvitedInstData(res);
+      setInstructors((prev) => [...prev.filter((i) => i.email !== res.instructor.email), res.instructor]);
+      setNewInstName('');
+      setNewInstEmail('');
+      setNewInstPhone('');
+    } catch (e: any) {
+      alert('Erro ao convidar personal: ' + e?.message);
+    } finally {
+      setIsInvitingInst(false);
+    }
+  };
 
   const selectStudent = (student: UserProfile) => {
     setSelectedStudent(student);
@@ -501,6 +590,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
   };
 
   const activeCount = students.filter((s) => (s.status || 'ativo') === 'ativo').length;
+  const pendingCount = students.filter((s) => s.status === 'pendente').length;
   const inactiveCount = students.filter((s) => s.status === 'inativo').length;
 
   const filteredStudents = students.filter((s) => {
@@ -510,6 +600,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
     const status = s.status || 'ativo';
 
     if (statusFilter === 'ativos') return matchesSearch && status === 'ativo';
+    if (statusFilter === 'pendentes') return matchesSearch && status === 'pendente';
     if (statusFilter === 'inativos') return matchesSearch && status === 'inativo';
     return matchesSearch;
   });
@@ -575,6 +666,24 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               >
                 <Dumbbell className="w-4 h-4 text-amber-400" />
                 <span className="hidden sm:inline">Meu Treino</span>
+              </button>
+            )}
+
+            {/* Gerenciar Personais (Exclusivo Master Admin) */}
+            {isMaster && (
+              <button
+                onClick={() => {
+                  loadInstructors();
+                  setShowInstructorsModal(true);
+                }}
+                className="p-2 sm:px-3 sm:py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 hover:text-white transition flex items-center gap-1.5 font-bold text-xs shadow-sm active:scale-95"
+                title="Gerenciar Personal Trainers"
+              >
+                <Users className="w-4 h-4 text-purple-400" />
+                <span className="hidden sm:inline">Personais</span>
+                {instructors.filter((i) => i.status === 'pendente').length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                )}
               </button>
             )}
 
@@ -669,7 +778,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="text-base font-bold text-white">{selectedStudent.name}</h2>
-                      {selectedStudent.status === 'inativo' ? (
+                      {selectedStudent.status === 'pendente' ? (
+                        <span className="text-[10px] font-bold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">
+                          AGUARDANDO LIBERAÇÃO
+                        </span>
+                      ) : selectedStudent.status === 'inativo' ? (
                         <span className="text-[10px] font-bold bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded-full border border-rose-500/30">
                           INATIVO
                         </span>
@@ -695,7 +808,7 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 </div>
               </div>
 
-              {/* Botões de Ação da Conta (Desativar/Reativar e Resetar Senha) */}
+              {/* Botões de Ação da Conta (Liberar/Desativar/Reativar e Resetar Senha) */}
               <div className="pt-2 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2">
                 <button
                   onClick={() => handleResetStudentPassword(selectedStudent)}
@@ -707,7 +820,16 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                   <span>{isResettingStudentPass ? 'Resetando...' : 'Resetar Senha'}</span>
                 </button>
 
-                {selectedStudent.status === 'inativo' ? (
+                {selectedStudent.status === 'pendente' ? (
+                  <button
+                    onClick={() => handleApproveStudent(selectedStudent)}
+                    disabled={isUpdatingStatus}
+                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md transition disabled:opacity-50 active:scale-95"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{isUpdatingStatus ? 'Liberando...' : 'Liberar Acesso (OK)'}</span>
+                  </button>
+                ) : selectedStudent.status === 'inativo' ? (
                   <button
                     onClick={handleToggleStudentStatus}
                     disabled={isUpdatingStatus}
@@ -962,7 +1084,32 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
               </div>
             </div>
 
-            {/* Filtros de Status (Todos / Ativos / Inativos) */}
+            {/* Aviso de Alunos Pendentes de Liberação (OK) */}
+            {pendingCount > 0 && (
+              <div className="bg-amber-950/40 border border-amber-500/40 rounded-2xl p-3.5 flex items-center justify-between gap-3 animate-in fade-in duration-200">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+                    <UserCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-200">
+                      {pendingCount} aluno{pendingCount > 1 ? 's' : ''} aguardando sua liberação!
+                    </h4>
+                    <p className="text-[11px] text-amber-300/70">
+                      Dê o OK para liberar o acesso às fichas de treino.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setStatusFilter('pendentes')}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shrink-0 transition active:scale-95 shadow-sm"
+                >
+                  Ver Pendentes
+                </button>
+              </div>
+            )}
+
+            {/* Filtros de Status (Todos / Ativos / Pendentes / Inativos) */}
             <div className="flex items-center gap-1.5 bg-zinc-900/80 p-1 rounded-2xl border border-zinc-800">
               <button
                 onClick={() => setStatusFilter('todos')}
@@ -983,6 +1130,21 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 }`}
               >
                 Ativos ({activeCount})
+              </button>
+              <button
+                onClick={() => setStatusFilter('pendentes')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1 ${
+                  statusFilter === 'pendentes'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <span>Pendentes</span>
+                {pendingCount > 0 && (
+                  <span className="text-[10px] bg-amber-500/30 px-1.5 py-0.2 rounded-full font-bold">
+                    {pendingCount}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => setStatusFilter('inativos')}
@@ -1019,13 +1181,16 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                   const plans = getPlansForStudent(student.id);
                   const weights = getWeightsForStudent(student.id);
                   const isInactive = student.status === 'inativo';
+                  const isPending = student.status === 'pendente';
 
                   return (
                     <div
                       key={student.id}
                       onClick={() => selectStudent(student)}
                       className={`border rounded-2xl p-3.5 flex items-center justify-between cursor-pointer transition active:scale-99 shadow-sm ${
-                        isInactive
+                        isPending
+                          ? 'bg-amber-950/20 border-amber-500/40 hover:border-amber-500/70'
+                          : isInactive
                           ? 'bg-zinc-900/60 border-zinc-800/60 opacity-75 hover:opacity-100 hover:border-zinc-700'
                           : 'bg-zinc-900 border-zinc-800 hover:border-purple-500/50'
                       }`}
@@ -1033,7 +1198,9 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                       <div className="flex items-center space-x-3">
                         <div
                           className={`w-10 h-10 rounded-xl border flex items-center justify-center font-bold text-sm ${
-                            isInactive
+                            isPending
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                              : isInactive
                               ? 'bg-zinc-800 border-zinc-700 text-zinc-400'
                               : 'bg-purple-500/10 border-purple-500/20 text-purple-400'
                           }`}
@@ -1043,7 +1210,11 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                             <h4 className="text-xs font-bold text-white">{student.name}</h4>
-                            {isInactive ? (
+                            {isPending ? (
+                              <span className="text-[9px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
+                                Aguardando OK
+                              </span>
+                            ) : isInactive ? (
                               <span className="text-[9px] font-bold bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded border border-rose-500/30">
                                 Inativo
                               </span>
@@ -1071,7 +1242,20 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                         </div>
                       </div>
 
-                      <div className="flex items-center text-zinc-500">
+                      <div className="flex items-center gap-2">
+                        {isPending && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleApproveStudent(student);
+                            }}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition active:scale-95"
+                            title="Dar OK e liberar acesso do aluno"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Liberar</span>
+                          </button>
+                        )}
                         <ChevronRight className="w-5 h-5 text-zinc-600" />
                       </div>
                     </div>
@@ -2058,6 +2242,277 @@ export const ProfessorScreen: React.FC<ProfessorScreenProps> = ({
                 Salvar Ficha do Aluno
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: GERENCIAR PERSONAL TRAINERS (MASTER ADMIN) */}
+      {/* ======================================================== */}
+      {showInstructorsModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-5 pb-safe shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Personal Trainers</h3>
+                  <p className="text-[11px] text-zinc-400">
+                    Aprovação e autorização de professores na plataforma
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowInstructorsModal(false)}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Ação: Convidar Novo Personal */}
+            <div className="pt-3 pb-2 flex-shrink-0">
+              <button
+                onClick={() => {
+                  setInvitedInstData(null);
+                  setShowInviteInstructorModal(true);
+                }}
+                className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 transition active:scale-98"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>+ Convidar Novo Personal Trainer</span>
+              </button>
+            </div>
+
+            {/* Lista de Personais */}
+            <div className="flex-1 overflow-y-auto space-y-2 py-2 pr-1">
+              {instructors.length === 0 ? (
+                <div className="text-center py-10 text-zinc-500 text-xs">
+                  Nenhum personal trainer encontrado.
+                </div>
+              ) : (
+                instructors.map((inst) => {
+                  const isInstMaster = inst.email.toLowerCase() === 'igormoraes792@gmail.com';
+                  const isPending = inst.status === 'pendente';
+                  const isInactive = inst.status === 'inativo';
+
+                  return (
+                    <div
+                      key={inst.id}
+                      className={`border rounded-2xl p-3 flex items-center justify-between transition ${
+                        isPending
+                          ? 'bg-amber-950/20 border-amber-500/40'
+                          : isInactive
+                          ? 'bg-zinc-900/50 border-zinc-800/60 opacity-70'
+                          : 'bg-zinc-950 border-zinc-800'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0">
+                        <div
+                          className={`w-9 h-9 rounded-xl border flex items-center justify-center font-bold text-xs flex-shrink-0 ${
+                            isPending
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                              : isInactive
+                              ? 'bg-zinc-800 border-zinc-700 text-zinc-400'
+                              : 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                          }`}
+                        >
+                          {inst.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="truncate">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-white truncate">{inst.name}</span>
+                            {isInstMaster && (
+                              <span className="text-[9px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
+                                Master
+                              </span>
+                            )}
+                            {isPending && (
+                              <span className="text-[9px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
+                                Aguardando Aprovação
+                              </span>
+                            )}
+                            {isInactive && (
+                              <span className="text-[9px] font-bold bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded border border-rose-500/30">
+                                Inativo
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 truncate mt-0.5">{inst.email}</div>
+                        </div>
+                      </div>
+
+                      {/* Ações */}
+                      {!isInstMaster && (
+                        <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                          {isPending && (
+                            <button
+                              onClick={() => handleApproveInstructor(inst)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition active:scale-95"
+                              title="Aprovar e Liberar Personal"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Aprovar</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleToggleInstructorStatus(inst)}
+                            className={`p-1.5 rounded-lg border text-xs font-semibold transition ${
+                              isInactive
+                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                                : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+                            }`}
+                            title={isInactive ? 'Reativar Personal' : 'Desativar Personal'}
+                          >
+                            {isInactive ? <UserCheck className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: CONVIDAR PERSONAL TRAINER (MASTER ADMIN) */}
+      {/* ======================================================== */}
+      {showInviteInstructorModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-safe shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Convidar Personal Trainer</h3>
+                  <p className="text-[11px] text-zinc-400">Autorizado diretamente pela conta Master</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowInviteInstructorModal(false);
+                  setInvitedInstData(null);
+                }}
+                className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {invitedInstData ? (
+              /* RESULTADO DO CONVITE */
+              <div className="pt-4 space-y-4">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Personal Cadastrado & Liberado!</h4>
+                    <p className="text-[11px] text-zinc-400">
+                      O acesso de <span className="text-white font-semibold">{invitedInstData.instructor.name}</span> foi autorizado como Personal Trainer.
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-zinc-300">
+                  Envie o link de primeiro acesso para o Personal cadastrar sua senha:
+                </p>
+
+                <div className="space-y-2">
+                  {/* Botão WhatsApp */}
+                  <a
+                    href={invitedInstData.whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition active:scale-98"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Enviar Acesso via WhatsApp</span>
+                  </a>
+
+                  {/* Botão Copiar Link */}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(invitedInstData.shareLink);
+                      setCopiedInstLink(true);
+                      setTimeout(() => setCopiedInstLink(false), 2000);
+                    }}
+                    className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold rounded-xl text-xs flex items-center justify-center gap-2 transition"
+                  >
+                    {copiedInstLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedInstLink ? 'Link Copiado!' : 'Copiar Link de Acesso'}</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setShowInviteInstructorModal(false);
+                    setInvitedInstData(null);
+                  }}
+                  className="w-full py-2 text-center text-xs font-semibold text-purple-400 hover:text-purple-300 transition"
+                >
+                  Concluir e Fechar
+                </button>
+              </div>
+            ) : (
+              /* FORMULÁRIO DO CONVITE */
+              <form onSubmit={handleInviteInstructor} className="space-y-3 pt-3">
+                <p className="text-xs text-zinc-400">
+                  Somente você (Master) pode cadastrar ou autorizar novos Personal Trainers. Ao cadastrar, o acesso é criado como <span className="text-emerald-400 font-semibold">Ativo</span>.
+                </p>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">Nome Completo do Personal</label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Treinador Roberto Alencar"
+                    value={newInstName}
+                    onChange={(e) => setNewInstName(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">E-mail do Personal</label>
+                  <input
+                    type="email"
+                    placeholder="personal@exemplo.com"
+                    value={newInstEmail}
+                    onChange={(e) => setNewInstEmail(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 mb-1">WhatsApp / Telefone (opcional)</label>
+                  <input
+                    type="tel"
+                    placeholder="(11) 99999-9999"
+                    value={newInstPhone}
+                    onChange={(e) => setNewInstPhone(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isInvitingInst}
+                  className="w-full mt-2 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl shadow-lg shadow-purple-600/30 text-xs flex items-center justify-center gap-2 active:scale-98 transition disabled:opacity-50"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{isInvitingInst ? 'Cadastrando e Gerando Link...' : 'Cadastrar e Autorizar Personal'}</span>
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

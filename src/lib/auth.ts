@@ -4,6 +4,7 @@ import {
   supabaseFetchProfile,
   supabaseSaveProfile,
   supabaseFetchStudents,
+  supabaseFetchInstructors,
   supabaseUpdateStudentStatus,
 } from './supabase';
 import { addSystemLog } from './logger';
@@ -110,9 +111,24 @@ export async function loginUser(
         // Checar se a conta está desativada
         if (cloudProfile.status === 'inativo') {
           addSystemLog('warn', 'AUTH', `Tentativa de login em conta desativada: ${cleanEmail}`);
+          const isProf = cloudProfile.role === 'professor';
           return {
             user: null,
-            error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
+            error: isProf
+              ? 'Sua conta de Personal foi desativada pelo Administrador Master.'
+              : 'Esta conta foi desativada pelo seu personal. Entre em contato para reativar seu acesso.',
+          };
+        }
+
+        // Checar se a conta está aguardando liberação
+        if (cloudProfile.status === 'pendente') {
+          addSystemLog('warn', 'AUTH', `Tentativa de login em conta pendente de aprovação: ${cleanEmail}`);
+          const isProf = cloudProfile.role === 'professor';
+          return {
+            user: null,
+            error: isProf
+              ? 'Seu cadastro de Personal está aguardando aprovação do Administrador Master (Igor Moraes).'
+              : 'Cadastro realizado com sucesso! Aguarde a liberação (OK) do seu Personal Trainer para acessar seus treinos.',
           };
         }
 
@@ -154,9 +170,22 @@ export async function loginUser(
   if (found) {
     if (found.status === 'inativo') {
       addSystemLog('warn', 'AUTH', `Tentativa de login local em conta desativada: ${cleanEmail}`);
+      const isProf = found.role === 'professor';
       return {
         user: null,
-        error: 'Esta conta foi desativada pelo personal. Entre em contato para reativar seu acesso.',
+        error: isProf
+          ? 'Sua conta de Personal foi desativada pelo Administrador Master.'
+          : 'Esta conta foi desativada pelo seu personal. Entre em contato para reativar seu acesso.',
+      };
+    }
+    if (found.status === 'pendente') {
+      addSystemLog('warn', 'AUTH', `Tentativa de login local em conta pendente: ${cleanEmail}`);
+      const isProf = found.role === 'professor';
+      return {
+        user: null,
+        error: isProf
+          ? 'Seu cadastro de Personal está aguardando aprovação do Administrador Master (Igor Moraes).'
+          : 'Cadastro realizado com sucesso! Aguarde a liberação (OK) do seu Personal Trainer para acessar seus treinos.',
       };
     }
     setCurrentUser(found);
@@ -177,12 +206,18 @@ export async function registerUser(
   password?: string,
   role: UserRole = 'aluno',
   instructorId?: string,
-  instructorName?: string
-): Promise<{ user: UserProfile | null; error?: string }> {
+  instructorName?: string,
+  initialStatus?: UserStatus
+): Promise<{ user: UserProfile | null; error?: string; status?: UserStatus }> {
   const cleanEmail = email.trim().toLowerCase();
   const supabase = getSupabaseClient();
   const isMaster = cleanEmail === MASTER_ADMIN_EMAIL;
   const finalRole: UserRole = isMaster ? 'admin' : role;
+
+  // Master é sempre ativo. Cadastros avulsos (sem convite direto) iniciam como 'pendente'
+  const finalStatus: UserStatus = isMaster
+    ? 'ativo'
+    : (initialStatus || 'pendente');
 
   // 1. Tenta cadastrar no Supabase Auth se houver senha
   if (supabase && password) {
@@ -206,19 +241,23 @@ export async function registerUser(
           email: cleanEmail,
           name: name.trim(),
           role: finalRole,
-          status: 'ativo',
+          status: finalStatus,
           isAdmin: isMaster,
           instructorId: instructorId,
           instructorName: instructorName,
           createdAt: new Date().toISOString(),
         };
         await supabaseSaveProfile(newProfile);
-        setCurrentUser(newProfile);
+
+        // Só faz login automático se o usuário já estiver ATIVO (ex: master)
+        if (finalStatus === 'ativo') {
+          setCurrentUser(newProfile);
+        }
 
         const users = getStoredUsers();
         saveStoredUsers([...users.filter((u) => u.email !== cleanEmail), newProfile]);
 
-        return { user: newProfile };
+        return { user: newProfile, status: finalStatus };
       }
     } catch (e: any) {
       console.warn('Erro no signUp do Supabase:', e?.message);
@@ -231,7 +270,7 @@ export async function registerUser(
     email: cleanEmail,
     name: name.trim(),
     role: finalRole,
-    status: 'ativo',
+    status: finalStatus,
     isAdmin: isMaster,
     instructorId: instructorId,
     instructorName: instructorName,
@@ -245,9 +284,12 @@ export async function registerUser(
   const users = getStoredUsers();
   const updatedUsers = [...users.filter((u) => u.email !== cleanEmail), newProfile];
   saveStoredUsers(updatedUsers);
-  setCurrentUser(newProfile);
 
-  return { user: newProfile };
+  if (finalStatus === 'ativo') {
+    setCurrentUser(newProfile);
+  }
+
+  return { user: newProfile, status: finalStatus };
 }
 
 /**
@@ -374,6 +416,132 @@ export async function inviteStudent(
   });
 
   return { student: newStudent, emailSent, shareLink, whatsappUrl, error: emailError };
+}
+
+/**
+ * Master Admin convida e autoriza um novo Personal Trainer no sistema
+ */
+export async function inviteInstructor(
+  instructorName: string,
+  instructorEmail: string,
+  phone?: string
+): Promise<{ instructor: UserProfile; emailSent: boolean; shareLink: string; whatsappUrl: string; error?: string }> {
+  const cleanEmail = instructorEmail.trim().toLowerCase();
+  const supabase = getSupabaseClient();
+  let instructorId = `prof-${Date.now()}`;
+
+  // 1. Tentar criar o usuário no Supabase Auth caso ainda não exista
+  if (supabase) {
+    try {
+      const tempPassword = 'FitTrack@' + Math.floor(100000 + Math.random() * 900000);
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: tempPassword,
+        options: {
+          data: {
+            name: instructorName.trim(),
+            role: 'professor',
+          },
+        },
+      });
+
+      if (!signUpError && signUpData?.user) {
+        instructorId = signUpData.user.id;
+        addSystemLog('info', 'CONVITE', `Personal criado no Supabase Auth (${cleanEmail})`);
+      } else if (signUpError) {
+        addSystemLog('info', 'CONVITE', `Nota no cadastro Personal Supabase Auth (${cleanEmail}): ${signUpError.message}`);
+        const existing = await supabaseFetchProfile(cleanEmail);
+        if (existing) {
+          instructorId = existing.id;
+        }
+      }
+    } catch (e: any) {
+      addSystemLog('warn', 'CONVITE', `Exceção no signUp do Supabase para ${cleanEmail}: ${e?.message}`);
+    }
+  }
+
+  const newInstructor: UserProfile = {
+    id: instructorId,
+    name: instructorName.trim(),
+    email: cleanEmail,
+    role: 'professor',
+    status: 'ativo',
+    mustResetPassword: true,
+    phone: phone?.trim(),
+    createdAt: new Date().toISOString(),
+  };
+
+  // 2. Salva perfil no Supabase
+  if (supabase) {
+    await supabaseSaveProfile(newInstructor);
+  }
+
+  // 3. Salva localmente
+  const users = getStoredUsers();
+  saveStoredUsers([...users.filter((u) => u.email !== cleanEmail), newInstructor]);
+
+  // 4. Dispara e-mail de definição de senha via Supabase
+  let emailSent = false;
+  let emailError: string | undefined;
+
+  if (supabase) {
+    try {
+      const redirectUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: redirectUrl,
+      });
+      if (!error) {
+        emailSent = true;
+        addSystemLog('success', 'CONVITE', `E-mail de boas-vindas disparado para Personal ${cleanEmail}`);
+      } else {
+        emailError = error.message;
+        addSystemLog('warn', 'CONVITE', `Supabase não disparou e-mail para ${cleanEmail}: ${error.message}`, error);
+      }
+    } catch (e: any) {
+      emailError = e?.message;
+      addSystemLog('error', 'CONVITE', `Erro ao chamar resetPasswordForEmail para ${cleanEmail}: ${e?.message}`);
+    }
+  }
+
+  // 5. Prepara link direto de primeiro acesso e mensagem para WhatsApp
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const shareLink = `${origin}?firstAccess=true&email=${encodeURIComponent(cleanEmail)}`;
+  const cleanPhone = phone?.replace(/\D/g, '') || '';
+  const greetingMsg = encodeURIComponent(
+    `Olá ${instructorName.trim()}! Você foi cadastrado como Personal Trainer no FitTrack PRO pelo Administrador Master Igor Moraes. Acesse o aplicativo e crie sua senha no link: ${shareLink}`
+  );
+  const whatsappUrl = cleanPhone
+    ? `https://wa.me/55${cleanPhone}?text=${greetingMsg}`
+    : `https://wa.me/?text=${greetingMsg}`;
+
+  addSystemLog('success', 'CONVITE', `Personal convidado pelo Master: ${instructorName} (${cleanEmail})`, {
+    emailSent,
+    shareLink,
+  });
+
+  return { instructor: newInstructor, emailSent, shareLink, whatsappUrl, error: emailError };
+}
+
+/**
+ * Busca a lista de professores/personais cadastrados no sistema
+ */
+export async function getInstructorsList(): Promise<UserProfile[]> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const list = await supabaseFetchInstructors();
+      if (list && list.length > 0) {
+        const stored = getStoredUsers();
+        const nonInstructors = stored.filter((u) => u.role !== 'professor');
+        saveStoredUsers([...nonInstructors, ...list]);
+        return list;
+      }
+    } catch (e) {
+      console.warn('Erro ao carregar personais do Supabase:', e);
+    }
+  }
+  const users = getStoredUsers();
+  return users.filter((u) => u.role === 'professor' || u.role === 'admin');
 }
 
 /**
